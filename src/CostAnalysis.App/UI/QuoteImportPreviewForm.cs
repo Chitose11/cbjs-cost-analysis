@@ -21,6 +21,7 @@ namespace CostAnalysis.App.UI
         private readonly Button _aiPreviewButton;
         private readonly Button _undoAiButton;
         private readonly Button _aiResultButton;
+        private readonly Button _pasteTextButton;
         private string _lastAiRawContent;
         private PreviewSnapshot _lastPreviewSnapshot;
         private static readonly string[] AiWritableColumns =
@@ -86,6 +87,10 @@ namespace CostAnalysis.App.UI
             _aiAssistButton = new Button { Text = "AI辅助识别", Width = 112, Height = 32 };
             _aiAssistButton.Click += OnAiAssist;
             buttons.Controls.Add(_aiAssistButton);
+
+            _pasteTextButton = new Button { Text = "粘贴文本", Width = 92, Height = 32 };
+            _pasteTextButton.Click += OnPasteRawText;
+            buttons.Controls.Add(_pasteTextButton);
 
             _aiPreviewButton = new Button { Text = "AI请求预览", Width = 108, Height = 32 };
             _aiPreviewButton.Click += OnAiRequestPreview;
@@ -234,6 +239,7 @@ namespace CostAnalysis.App.UI
 
         private void LoadItems()
         {
+            _grid.Rows.Clear();
             foreach (var item in _preview.Items)
             {
                 var rowIndex = _grid.Rows.Add();
@@ -505,12 +511,46 @@ namespace CostAnalysis.App.UI
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
             _aiAssistButton.Enabled = !busy;
             _aiPreviewButton.Enabled = !busy;
+            _pasteTextButton.Enabled = !busy;
             _editPriceTiersButton.Enabled = !busy;
             _undoAiButton.Enabled = !busy && HasAiChanges();
             _aiResultButton.Enabled = !busy && !string.IsNullOrWhiteSpace(_lastAiRawContent);
             _grid.Enabled = !busy;
             _rawGrid.Enabled = !busy;
             _aiAssistButton.Text = busy ? "识别中..." : "AI辅助识别";
+        }
+
+        private void OnPasteRawText(object sender, EventArgs e)
+        {
+            using (var form = new PasteRawTextForm())
+            {
+                if (form.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                var lines = new List<string>();
+                foreach (var line in form.RawText.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+                {
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        lines.Add(line.Trim());
+                    }
+                }
+
+                _preview.RawSheet = QuoteRawSheetPreview.FromLines(lines);
+                if (string.IsNullOrWhiteSpace(_preview.TemplateType) ||
+                    _preview.TemplateType.Contains("PDF") ||
+                    _preview.TemplateType.Contains("图片") ||
+                    _preview.TemplateType.Contains("待识别"))
+                {
+                    _preview.TemplateType = "手工文本预览";
+                }
+
+                _summaryLabel.Text = BuildSummaryText();
+                LoadRawPreview();
+                MessageBox.Show(this, "已更新顶部原始预览。可以继续点击“AI辅助识别”。", "粘贴原始文本", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
 
         private int ApplyAiResult(AiQuoteRecognitionResult result)
@@ -567,15 +607,49 @@ namespace CostAnalysis.App.UI
             {
                 var aiItem = result.Items[i];
                 var rowIndex = aiItem.Index.HasValue ? aiItem.Index.Value - 1 : i;
-                if (rowIndex < 0 || rowIndex >= _grid.Rows.Count)
+                if (rowIndex < 0)
                 {
                     continue;
                 }
 
-                var row = _grid.Rows[rowIndex];
-                var item = row.Tag as QuoteImportItem;
+                DataGridViewRow row;
+                QuoteImportItem item;
+                if (rowIndex >= _grid.Rows.Count)
+                {
+                    item = CreateItemFromAi(aiItem);
+                    if (_preview.Items == null)
+                    {
+                        _preview.Items = new List<QuoteImportItem>();
+                    }
+
+                    _preview.Items.Add(item);
+                    var newRowIndex = _grid.Rows.Add();
+                    row = _grid.Rows[newRowIndex];
+                    row.Tag = item;
+                    row.Cells["Selected"].Value = true;
+                    FillRow(row, item);
+                    row.Cells["AiStatus"].Value = "AI新增，需人工复核";
+                    row.DefaultCellStyle.BackColor = Color.FromArgb(255, 249, 219);
+                    totalChangedCount += CountFilledAiFields(aiItem);
+                    continue;
+                }
+
+                row = _grid.Rows[rowIndex];
+                item = row.Tag as QuoteImportItem;
                 if (item == null)
                 {
+                    item = CreateItemFromAi(aiItem);
+                    row.Tag = item;
+                    if (_preview.Items == null)
+                    {
+                        _preview.Items = new List<QuoteImportItem>();
+                    }
+
+                    _preview.Items.Add(item);
+                    row.Cells["Selected"].Value = true;
+                    FillRow(row, item);
+                    row.Cells["AiStatus"].Value = "AI新增，需人工复核";
+                    totalChangedCount += CountFilledAiFields(aiItem);
                     continue;
                 }
 
@@ -613,9 +687,37 @@ namespace CostAnalysis.App.UI
                 }
             }
 
+            _summaryLabel.Text = BuildSummaryText();
             _undoAiButton.Enabled = HasAiChanges();
             _aiResultButton.Enabled = !string.IsNullOrWhiteSpace(_lastAiRawContent);
             return totalChangedCount;
+        }
+
+        private static QuoteImportItem CreateItemFromAi(AiQuoteRecognitionItem aiItem)
+        {
+            return new QuoteImportItem
+            {
+                RawName = aiItem.RawName,
+                MaterialCode = aiItem.MaterialCode,
+                MaterialName = aiItem.MaterialName,
+                FinishedSize = aiItem.FinishedSize,
+                MaterialProcess = aiItem.MaterialProcess,
+                MaterialNameExtracted = aiItem.MaterialNameExtracted,
+                GramWeight = aiItem.GramWeight,
+                PriceTiers = new List<PriceTier>()
+            };
+        }
+
+        private static int CountFilledAiFields(AiQuoteRecognitionItem aiItem)
+        {
+            var count = 0;
+            if (!string.IsNullOrWhiteSpace(aiItem.MaterialCode)) count++;
+            if (!string.IsNullOrWhiteSpace(aiItem.MaterialName)) count++;
+            if (!string.IsNullOrWhiteSpace(aiItem.FinishedSize)) count++;
+            if (!string.IsNullOrWhiteSpace(aiItem.MaterialProcess)) count++;
+            if (!string.IsNullOrWhiteSpace(aiItem.MaterialNameExtracted)) count++;
+            if (!string.IsNullOrWhiteSpace(aiItem.GramWeight)) count++;
+            return count;
         }
 
         private void ClearAiMarkers()
@@ -729,6 +831,7 @@ namespace CostAnalysis.App.UI
                 _lastPreviewSnapshot.Restore(_preview);
                 _summaryLabel.Text = BuildSummaryText();
                 LoadRawPreview();
+                LoadItems();
             }
 
             _undoAiButton.Enabled = false;
@@ -990,6 +1093,7 @@ namespace CostAnalysis.App.UI
             public int HeaderRow { get; set; }
             public int QuantityRow { get; set; }
             public int DataStartRow { get; set; }
+            public List<QuoteImportItem> Items { get; set; }
 
             public static PreviewSnapshot Capture(QuoteImportPreview preview)
             {
@@ -1001,7 +1105,8 @@ namespace CostAnalysis.App.UI
                     TemplateType = preview.TemplateType,
                     HeaderRow = preview.HeaderRow,
                     QuantityRow = preview.QuantityRow,
-                    DataStartRow = preview.DataStartRow
+                    DataStartRow = preview.DataStartRow,
+                    Items = CloneItems(preview.Items)
                 };
             }
 
@@ -1014,6 +1119,56 @@ namespace CostAnalysis.App.UI
                 preview.HeaderRow = HeaderRow;
                 preview.QuantityRow = QuantityRow;
                 preview.DataStartRow = DataStartRow;
+                preview.Items = CloneItems(Items);
+            }
+
+            private static List<QuoteImportItem> CloneItems(List<QuoteImportItem> source)
+            {
+                var result = new List<QuoteImportItem>();
+                if (source == null)
+                {
+                    return result;
+                }
+
+                foreach (var item in source)
+                {
+                    result.Add(new QuoteImportItem
+                    {
+                        RawName = item.RawName,
+                        MaterialCode = item.MaterialCode,
+                        MaterialName = item.MaterialName,
+                        FinishedSize = item.FinishedSize,
+                        MaterialProcess = item.MaterialProcess,
+                        MaterialNameExtracted = item.MaterialNameExtracted,
+                        GramWeight = item.GramWeight,
+                        UsageQuantity = item.UsageQuantity,
+                        PriceTiers = ClonePriceTiers(item.PriceTiers)
+                    });
+                }
+
+                return result;
+            }
+
+            private static List<PriceTier> ClonePriceTiers(List<PriceTier> source)
+            {
+                var result = new List<PriceTier>();
+                if (source == null)
+                {
+                    return result;
+                }
+
+                foreach (var tier in source)
+                {
+                    result.Add(new PriceTier
+                    {
+                        Label = tier.Label,
+                        MinQuantity = tier.MinQuantity,
+                        MaxQuantity = tier.MaxQuantity,
+                        UnitPrice = tier.UnitPrice
+                    });
+                }
+
+                return result;
             }
         }
     }

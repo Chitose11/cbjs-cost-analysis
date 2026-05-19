@@ -99,6 +99,78 @@ WHERE id = @id;", connection))
             return analysis;
         }
 
+        public List<CostHistoryItem> SearchCostHistory(string materialCode, string materialName, int limit)
+        {
+            var list = new List<CostHistoryItem>();
+            var code = (materialCode ?? string.Empty).Trim();
+            var name = (materialName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(code) && string.IsNullOrWhiteSpace(name))
+            {
+                return list;
+            }
+
+            using (var connection = new SQLiteConnection(DatabaseInitializer.ConnectionString))
+            {
+                connection.Open();
+                using (var command = new SQLiteCommand(@"
+SELECT ca.id AS analysis_id, ca.analysis_no, ca.customer_name, ca.project_name, ca.analysis_date, ca.created_at,
+       i.row_no, i.material_code, i.material_name, i.material_description, i.supplier, i.base_material_name,
+       i.material_vendor, i.material_unit_price, i.gram_weight, i.expanded_size, i.material_cost,
+       i.printing_cost, i.post_process_cost, i.other_cost, i.purchase_unit_price,
+       i.total_quantity, i.total_price, i.price_tiers_json
+FROM cost_analysis_items i
+INNER JOIN cost_analysis ca ON ca.id = i.cost_analysis_id
+WHERE (@code <> '' AND i.material_code = @code)
+   OR (@name <> '' AND i.material_name LIKE @name_like)
+ORDER BY
+    CASE WHEN @code <> '' AND i.material_code = @code THEN 0 ELSE 1 END,
+    ca.id DESC,
+    i.row_no
+LIMIT @limit;", connection))
+                {
+                    command.Parameters.AddWithValue("@code", code);
+                    command.Parameters.AddWithValue("@name", name);
+                    command.Parameters.AddWithValue("@name_like", "%" + name + "%");
+                    command.Parameters.AddWithValue("@limit", limit <= 0 ? 50 : limit);
+                    using (var reader = command.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            list.Add(new CostHistoryItem
+                            {
+                                AnalysisId = ReadInt(reader, "analysis_id"),
+                                AnalysisNo = ReadString(reader, "analysis_no"),
+                                CustomerName = ReadString(reader, "customer_name"),
+                                ProjectName = ReadString(reader, "project_name"),
+                                AnalysisDate = ReadString(reader, "analysis_date"),
+                                CreatedAt = ReadString(reader, "created_at"),
+                                No = ReadInt(reader, "row_no"),
+                                MaterialCode = ReadString(reader, "material_code"),
+                                MaterialName = ReadString(reader, "material_name"),
+                                MaterialDescription = ReadString(reader, "material_description"),
+                                Supplier = ReadString(reader, "supplier"),
+                                BaseMaterialName = ReadString(reader, "base_material_name"),
+                                MaterialVendor = ReadString(reader, "material_vendor"),
+                                MaterialUnitPrice = ReadDecimal(reader, "material_unit_price"),
+                                GramWeight = ReadString(reader, "gram_weight"),
+                                ExpandedSize = ReadString(reader, "expanded_size"),
+                                MaterialCost = ReadDecimal(reader, "material_cost"),
+                                PrintingCost = ReadDecimal(reader, "printing_cost"),
+                                PostProcessCost = ReadDecimal(reader, "post_process_cost"),
+                                OtherCost = ReadDecimal(reader, "other_cost"),
+                                PurchaseUnitPrice = ReadDecimal(reader, "purchase_unit_price"),
+                                TotalQuantity = ReadDecimal(reader, "total_quantity"),
+                                TotalPrice = ReadDecimal(reader, "total_price"),
+                                PriceTiers = DeserializePriceTiers(ReadString(reader, "price_tiers_json"))
+                            });
+                        }
+                    }
+                }
+            }
+
+            return list;
+        }
+
         private List<SavedCostAnalysisItem> GetItems(int analysisId)
         {
             var list = new List<SavedCostAnalysisItem>();
@@ -371,7 +443,7 @@ INSERT INTO cost_analysis_items (
         public List<SavedCostAnalysisItem> Items { get; set; }
     }
 
-    internal sealed class SavedCostAnalysisItem
+    internal class SavedCostAnalysisItem
     {
         public int No { get; set; }
         public string MaterialCode { get; set; }
@@ -391,5 +463,15 @@ INSERT INTO cost_analysis_items (
         public decimal? TotalQuantity { get; set; }
         public decimal? TotalPrice { get; set; }
         public List<PriceTier> PriceTiers { get; set; }
+    }
+
+    internal sealed class CostHistoryItem : SavedCostAnalysisItem
+    {
+        public int AnalysisId { get; set; }
+        public string AnalysisNo { get; set; }
+        public string CustomerName { get; set; }
+        public string ProjectName { get; set; }
+        public string AnalysisDate { get; set; }
+        public string CreatedAt { get; set; }
     }
 }

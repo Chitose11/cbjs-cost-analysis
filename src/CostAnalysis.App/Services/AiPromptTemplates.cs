@@ -82,5 +82,45 @@ namespace CostAnalysis.App.Services
 }";
             }
         }
+
+        public static string CostCompletionSystemPrompt
+        {
+            get
+            {
+                return "你是包装印刷成本分析助手。只输出严格 JSON，不输出 Markdown 或自然语言解释。";
+            }
+        }
+
+        public static string CostCompletionSchemaInstruction
+        {
+            get
+            {
+                return @"请按以下 JSON 结构返回：
+{
+  ""items"": [
+    {
+      ""index"": 1,
+      ""material_cost"": null,
+      ""printing_cost"": null,
+      ""post_process_cost"": null,
+      ""other_cost"": null,
+      ""purchase_unit_price"": null,
+      ""confidence"": 0,
+      ""requires_review"": true,
+      ""reason"": """",
+      ""warnings"": []
+    }
+  ],
+  ""warnings"": []
+}
+
+规则：
+1. 所有金额只返回数字或 null，不要带货币符号。
+2. 不确定的费用必须返回 null，不要硬猜。
+3. 如果已有历史参考或本地规则能支持，请优先使用；否则只做谨慎建议。
+4. purchase_unit_price 应等于 material_cost + printing_cost + post_process_cost + other_cost；如果费用项不完整则返回 null。
+5. requires_review 在任何推测、不完整或低置信度时必须为 true。";
+            }
+        }
     }
 }
