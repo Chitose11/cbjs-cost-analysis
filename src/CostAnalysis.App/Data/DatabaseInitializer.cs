@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS materials (
 );");
 
                 Execute(connection, @"
+CREATE TABLE IF NOT EXISTS process_cost_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    keyword TEXT NOT NULL,
+    cost_type TEXT NOT NULL,
+    amount REAL,
+    is_enabled INTEGER DEFAULT 1,
+    remark TEXT
+);");
+
+                Execute(connection, @"
 CREATE TABLE IF NOT EXISTS quote_templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -106,6 +116,7 @@ CREATE TABLE IF NOT EXISTS cost_analysis_items (
     total_quantity REAL,
     total_price REAL
 );");
+                EnsureColumn(connection, "cost_analysis_items", "price_tiers_json", "TEXT");
 
                 Execute(connection, @"
 CREATE TABLE IF NOT EXISTS cost_analysis_item_meta (
@@ -142,6 +153,23 @@ CREATE TABLE IF NOT EXISTS ai_settings (
             {
                 command.ExecuteNonQuery();
             }
+        }
+
+        private static void EnsureColumn(SQLiteConnection connection, string tableName, string columnName, string columnType)
+        {
+            using (var command = new SQLiteCommand("PRAGMA table_info(" + tableName + ");", connection))
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    if (string.Equals(System.Convert.ToString(reader["name"]), columnName, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+                }
+            }
+
+            Execute(connection, "ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnType + ";");
         }
     }
 }

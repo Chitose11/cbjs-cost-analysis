@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -13,7 +14,9 @@ namespace CostAnalysis.App.UI
     {
         private readonly QuoteImportPreview _preview;
         private readonly DataGridView _grid;
+        private readonly DataGridView _rawGrid;
         private readonly Label _summaryLabel;
+        private readonly Button _editPriceTiersButton;
         private readonly Button _aiAssistButton;
         private readonly Button _aiPreviewButton;
         private readonly Button _undoAiButton;
@@ -39,7 +42,7 @@ namespace CostAnalysis.App.UI
 
             Text = "报价单导入确认";
             StartPosition = FormStartPosition.CenterParent;
-            Size = new Size(1120, 640);
+            Size = new Size(1180, 700);
             Font = new Font("Microsoft YaHei UI", 9F);
 
             var root = new TableLayoutPanel
@@ -58,7 +61,8 @@ namespace CostAnalysis.App.UI
             root.Controls.Add(_summaryLabel, 0, 0);
 
             _grid = BuildGrid();
-            root.Controls.Add(_grid, 0, 1);
+            _rawGrid = BuildRawGrid();
+            root.Controls.Add(BuildPreviewLayout(), 0, 1);
 
             var buttons = new FlowLayoutPanel
             {
@@ -74,6 +78,10 @@ namespace CostAnalysis.App.UI
             var cancel = new Button { Text = "取消", Width = 82, Height = 32 };
             cancel.Click += (_, __) => DialogResult = DialogResult.Cancel;
             buttons.Controls.Add(cancel);
+
+            _editPriceTiersButton = new Button { Text = "编辑阶梯价", Width = 108, Height = 32 };
+            _editPriceTiersButton.Click += OnEditPriceTiers;
+            buttons.Controls.Add(_editPriceTiersButton);
 
             _aiAssistButton = new Button { Text = "AI辅助识别", Width = 112, Height = 32 };
             _aiAssistButton.Click += OnAiAssist;
@@ -92,6 +100,7 @@ namespace CostAnalysis.App.UI
             buttons.Controls.Add(_undoAiButton);
 
             LoadItems();
+            LoadRawPreview();
         }
 
         private Label BuildSummaryLabel()
@@ -130,6 +139,8 @@ namespace CostAnalysis.App.UI
                 RowHeadersVisible = false,
                 SelectionMode = DataGridViewSelectionMode.CellSelect
             };
+            grid.CellValidating += OnGridCellValidating;
+            grid.CellDoubleClick += OnGridCellDoubleClick;
 
             grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Selected", HeaderText = "加入", Width = 48 });
             AddColumn(grid, "MaterialCode", "物料编码");
@@ -139,9 +150,86 @@ namespace CostAnalysis.App.UI
             AddColumn(grid, "MaterialNameExtracted", "材料名称");
             AddColumn(grid, "GramWeight", "克重");
             AddColumn(grid, "UsageQuantity", "用量");
-            AddColumn(grid, "PriceTiers", "阶梯价格");
-            AddColumn(grid, "AiStatus", "AI状态");
+            AddColumn(grid, "PriceTiers", "阶梯价格", true);
+            AddColumn(grid, "AiStatus", "AI状态", true);
             return grid;
+        }
+
+        private Control BuildPreviewLayout()
+        {
+            var split = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Horizontal,
+                SplitterWidth = 6,
+                BackColor = Color.FromArgb(245, 245, 247)
+            };
+            split.SizeChanged += (_, __) => SetPreviewSplitterDistance(split);
+
+            split.Panel1.Controls.Add(BuildSectionPanel("原始文件预览", _rawGrid));
+            split.Panel2.Controls.Add(BuildSectionPanel("识别结果（可直接修正字段）", _grid));
+            return split;
+        }
+
+        private static void SetPreviewSplitterDistance(SplitContainer split)
+        {
+            const int topMinSize = 140;
+            const int bottomMinSize = 180;
+            var maxDistance = split.Height - bottomMinSize;
+            if (maxDistance < topMinSize)
+            {
+                return;
+            }
+
+            var distance = Math.Min(230, maxDistance);
+            if (distance >= topMinSize && split.SplitterDistance != distance)
+            {
+                split.SplitterDistance = distance;
+            }
+        }
+
+        private static Control BuildSectionPanel(string title, Control content)
+        {
+            var panel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                RowCount = 2,
+                ColumnCount = 1
+            };
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var label = new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = title,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(2, 0, 0, 0),
+                ForeColor = Color.FromArgb(80, 80, 85),
+                BackColor = Color.White
+            };
+            panel.Controls.Add(label, 0, 0);
+
+            content.Dock = DockStyle.Fill;
+            panel.Controls.Add(content, 0, 1);
+            return panel;
+        }
+
+        private DataGridView BuildRawGrid()
+        {
+            return new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
+                BackgroundColor = Color.White,
+                ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText,
+                ReadOnly = true,
+                RowHeadersVisible = true,
+                RowHeadersWidth = 54,
+                SelectionMode = DataGridViewSelectionMode.CellSelect
+            };
         }
 
         private void LoadItems()
@@ -153,6 +241,65 @@ namespace CostAnalysis.App.UI
                 row.Tag = item;
                 row.Cells["Selected"].Value = true;
                 FillRow(row, item);
+            }
+        }
+
+        private void LoadRawPreview()
+        {
+            _rawGrid.Rows.Clear();
+            _rawGrid.Columns.Clear();
+
+            if (_preview.RawSheet == null || _preview.RawSheet.Cells == null)
+            {
+                return;
+            }
+
+            var rows = GetVisibleRowCount(_preview.RawSheet);
+            var columns = GetVisibleColumnCount(_preview.RawSheet);
+            for (var column = 1; column <= columns; column++)
+            {
+                _rawGrid.Columns.Add(new DataGridViewTextBoxColumn
+                {
+                    Name = "Column" + column,
+                    HeaderText = ToExcelColumnName(column),
+                    SortMode = DataGridViewColumnSortMode.NotSortable,
+                    Width = 110
+                });
+            }
+
+            for (var row = 1; row <= rows; row++)
+            {
+                var rowIndex = _rawGrid.Rows.Add();
+                var gridRow = _rawGrid.Rows[rowIndex];
+                gridRow.HeaderCell.Value = row.ToString();
+
+                for (var column = 1; column <= columns; column++)
+                {
+                    gridRow.Cells[column - 1].Value = GetRawCell(_preview.RawSheet, row, column);
+                }
+
+                ApplyRawRowStyle(gridRow, row);
+            }
+        }
+
+        private void ApplyRawRowStyle(DataGridViewRow row, int sourceRow)
+        {
+            if (sourceRow == _preview.HeaderRow)
+            {
+                row.DefaultCellStyle.BackColor = Color.FromArgb(230, 244, 255);
+                row.DefaultCellStyle.Font = new Font(_rawGrid.Font, FontStyle.Bold);
+                row.HeaderCell.ToolTipText = "表头行";
+            }
+            else if (sourceRow == _preview.QuantityRow && _preview.QuantityRow != _preview.HeaderRow)
+            {
+                row.DefaultCellStyle.BackColor = Color.FromArgb(255, 247, 230);
+                row.HeaderCell.ToolTipText = "数量行";
+            }
+            else if (sourceRow >= _preview.DataStartRow &&
+                     sourceRow < _preview.DataStartRow + (_preview.Items == null ? 0 : _preview.Items.Count))
+            {
+                row.DefaultCellStyle.BackColor = Color.FromArgb(246, 255, 237);
+                row.HeaderCell.ToolTipText = "识别到的物料行";
             }
         }
 
@@ -170,6 +317,12 @@ namespace CostAnalysis.App.UI
 
         private void Confirm()
         {
+            _grid.EndEdit();
+            if (!ApplyManualEditsToItems())
+            {
+                return;
+            }
+
             SelectedItems.Clear();
             foreach (DataGridViewRow row in _grid.Rows)
             {
@@ -187,6 +340,118 @@ namespace CostAnalysis.App.UI
             }
 
             DialogResult = DialogResult.OK;
+        }
+
+        private bool ApplyManualEditsToItems()
+        {
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                var item = row.Tag as QuoteImportItem;
+                if (item == null)
+                {
+                    continue;
+                }
+
+                decimal? usageQuantity;
+                if (!TryParseOptionalDecimal(GetCellText(row, "UsageQuantity"), out usageQuantity))
+                {
+                    _grid.CurrentCell = row.Cells["UsageQuantity"];
+                    MessageBox.Show(this, "用量必须是数字，或留空。", "导入确认", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return false;
+                }
+
+                item.MaterialCode = GetCellText(row, "MaterialCode");
+                item.MaterialName = GetCellText(row, "MaterialName");
+                item.FinishedSize = GetCellText(row, "FinishedSize");
+                item.MaterialProcess = GetCellText(row, "MaterialProcess");
+                item.MaterialNameExtracted = GetCellText(row, "MaterialNameExtracted");
+                item.GramWeight = GetCellText(row, "GramWeight");
+                item.UsageQuantity = usageQuantity;
+            }
+
+            return true;
+        }
+
+        private void OnGridCellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0)
+            {
+                return;
+            }
+
+            if (_grid.Columns[e.ColumnIndex].Name == "PriceTiers")
+            {
+                EditPriceTiers(_grid.Rows[e.RowIndex]);
+            }
+        }
+
+        private void OnEditPriceTiers(object sender, EventArgs e)
+        {
+            var row = GetCurrentDataRow();
+            if (row == null)
+            {
+                MessageBox.Show(this, "请先在识别结果中选择一条物料。", "编辑阶梯价格", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            EditPriceTiers(row);
+        }
+
+        private DataGridViewRow GetCurrentDataRow()
+        {
+            if (_grid.CurrentRow != null && _grid.CurrentRow.Tag is QuoteImportItem)
+            {
+                return _grid.CurrentRow;
+            }
+
+            if (_grid.CurrentCell != null)
+            {
+                var row = _grid.Rows[_grid.CurrentCell.RowIndex];
+                return row.Tag is QuoteImportItem ? row : null;
+            }
+
+            return null;
+        }
+
+        private void EditPriceTiers(DataGridViewRow row)
+        {
+            var item = row.Tag as QuoteImportItem;
+            if (item == null)
+            {
+                return;
+            }
+
+            using (var form = new PriceTiersForm(item.PriceTiers))
+            {
+                if (form.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                item.PriceTiers = form.PriceTiers;
+                row.Cells["PriceTiers"].Value = FormatTiers(item);
+                row.Cells["PriceTiers"].Style.BackColor = Color.FromArgb(232, 244, 255);
+                row.Cells["PriceTiers"].ToolTipText = "阶梯价格已人工修正";
+            }
+        }
+
+        private void OnGridCellValidating(object sender, DataGridViewCellValidatingEventArgs e)
+        {
+            if (_grid.Columns[e.ColumnIndex].Name != "UsageQuantity")
+            {
+                return;
+            }
+
+            decimal? ignored;
+            if (!TryParseOptionalDecimal(Convert.ToString(e.FormattedValue), out ignored))
+            {
+                e.Cancel = true;
+                _grid.Rows[e.RowIndex].Cells[e.ColumnIndex].ErrorText = "用量必须是数字，或留空。";
+            }
+            else
+            {
+                _grid.Rows[e.RowIndex].Cells[e.ColumnIndex].ErrorText = string.Empty;
+            }
         }
 
         private async void OnAiAssist(object sender, EventArgs e)
@@ -240,9 +505,11 @@ namespace CostAnalysis.App.UI
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
             _aiAssistButton.Enabled = !busy;
             _aiPreviewButton.Enabled = !busy;
+            _editPriceTiersButton.Enabled = !busy;
             _undoAiButton.Enabled = !busy && HasAiChanges();
             _aiResultButton.Enabled = !busy && !string.IsNullOrWhiteSpace(_lastAiRawContent);
             _grid.Enabled = !busy;
+            _rawGrid.Enabled = !busy;
             _aiAssistButton.Text = busy ? "识别中..." : "AI辅助识别";
         }
 
@@ -294,6 +561,7 @@ namespace CostAnalysis.App.UI
             }
 
             _summaryLabel.Text = BuildSummaryText();
+            LoadRawPreview();
 
             for (var i = 0; i < result.Items.Count; i++)
             {
@@ -460,6 +728,7 @@ namespace CostAnalysis.App.UI
             {
                 _lastPreviewSnapshot.Restore(_preview);
                 _summaryLabel.Text = BuildSummaryText();
+                LoadRawPreview();
             }
 
             _undoAiButton.Enabled = false;
@@ -602,14 +871,106 @@ namespace CostAnalysis.App.UI
             return sb.ToString();
         }
 
-        private static void AddColumn(DataGridView grid, string name, string header)
+        private static void AddColumn(DataGridView grid, string name, string header, bool readOnly = false)
         {
-            grid.Columns.Add(new DataGridViewTextBoxColumn
+            var column = new DataGridViewTextBoxColumn
             {
                 Name = name,
                 HeaderText = header,
+                ReadOnly = readOnly,
                 SortMode = DataGridViewColumnSortMode.NotSortable
-            });
+            };
+            if (readOnly)
+            {
+                column.DefaultCellStyle.BackColor = Color.FromArgb(248, 248, 250);
+                column.DefaultCellStyle.ForeColor = Color.FromArgb(85, 85, 90);
+            }
+
+            grid.Columns.Add(column);
+        }
+
+        private static string GetCellText(DataGridViewRow row, string columnName)
+        {
+            return Convert.ToString(row.Cells[columnName].Value).Trim();
+        }
+
+        private static bool TryParseOptionalDecimal(string value, out decimal? result)
+        {
+            result = null;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return true;
+            }
+
+            decimal parsed;
+            if (decimal.TryParse(value.Trim(), NumberStyles.Number, CultureInfo.CurrentCulture, out parsed) ||
+                decimal.TryParse(value.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out parsed))
+            {
+                result = parsed;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static int GetVisibleRowCount(QuoteRawSheetPreview rawSheet)
+        {
+            var lastRow = Math.Min(rawSheet.Rows, rawSheet.Cells.GetLength(0) - 1);
+            for (var row = lastRow; row >= 1; row--)
+            {
+                for (var column = 1; column <= Math.Min(rawSheet.Columns, rawSheet.Cells.GetLength(1) - 1); column++)
+                {
+                    if (!string.IsNullOrWhiteSpace(rawSheet.Cells[row, column]))
+                    {
+                        return row;
+                    }
+                }
+            }
+
+            return Math.Min(rawSheet.Rows, 1);
+        }
+
+        private static int GetVisibleColumnCount(QuoteRawSheetPreview rawSheet)
+        {
+            var lastColumn = Math.Min(rawSheet.Columns, rawSheet.Cells.GetLength(1) - 1);
+            for (var column = lastColumn; column >= 1; column--)
+            {
+                for (var row = 1; row <= Math.Min(rawSheet.Rows, rawSheet.Cells.GetLength(0) - 1); row++)
+                {
+                    if (!string.IsNullOrWhiteSpace(rawSheet.Cells[row, column]))
+                    {
+                        return column;
+                    }
+                }
+            }
+
+            return Math.Min(rawSheet.Columns, 1);
+        }
+
+        private static string GetRawCell(QuoteRawSheetPreview rawSheet, int row, int column)
+        {
+            if (row <= 0 ||
+                column <= 0 ||
+                row >= rawSheet.Cells.GetLength(0) ||
+                column >= rawSheet.Cells.GetLength(1))
+            {
+                return string.Empty;
+            }
+
+            return rawSheet.Cells[row, column] ?? string.Empty;
+        }
+
+        private static string ToExcelColumnName(int column)
+        {
+            var name = string.Empty;
+            while (column > 0)
+            {
+                column--;
+                name = (char)('A' + column % 26) + name;
+                column /= 26;
+            }
+
+            return name;
         }
 
         private sealed class AiChangeInfo

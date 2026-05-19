@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
 using System.Windows.Forms;
+using System.Web.Script.Serialization;
+using CostAnalysis.App.Services;
 
 namespace CostAnalysis.App.Data
 {
@@ -106,7 +108,7 @@ WHERE id = @id;", connection))
                 using (var command = new SQLiteCommand(@"
 SELECT row_no, material_code, material_name, material_description, supplier, base_material_name,
        material_vendor, material_unit_price, gram_weight, expanded_size, material_cost, printing_cost,
-       post_process_cost, other_cost, purchase_unit_price, total_quantity, total_price
+       post_process_cost, other_cost, purchase_unit_price, total_quantity, total_price, price_tiers_json
 FROM cost_analysis_items
 WHERE cost_analysis_id = @id
 ORDER BY row_no, id;", connection))
@@ -134,7 +136,8 @@ ORDER BY row_no, id;", connection))
                                 OtherCost = ReadDecimal(reader, "other_cost"),
                                 PurchaseUnitPrice = ReadDecimal(reader, "purchase_unit_price"),
                                 TotalQuantity = ReadDecimal(reader, "total_quantity"),
-                                TotalPrice = ReadDecimal(reader, "total_price")
+                                TotalPrice = ReadDecimal(reader, "total_price"),
+                                PriceTiers = DeserializePriceTiers(ReadString(reader, "price_tiers_json"))
                             });
                         }
                     }
@@ -179,12 +182,12 @@ INSERT INTO cost_analysis_items (
     cost_analysis_id, row_no, material_code, material_name, material_description, supplier,
     base_material_name, material_vendor, material_unit_price, gram_weight, expanded_size,
     material_cost, printing_cost, post_process_cost, other_cost, purchase_unit_price,
-    total_quantity, total_price
+    total_quantity, total_price, price_tiers_json
 ) VALUES (
     @cost_analysis_id, @row_no, @material_code, @material_name, @material_description, @supplier,
     @base_material_name, @material_vendor, @material_unit_price, @gram_weight, @expanded_size,
     @material_cost, @printing_cost, @post_process_cost, @other_cost, @purchase_unit_price,
-    @total_quantity, @total_price
+    @total_quantity, @total_price, @price_tiers_json
 );", connection, transaction))
                 {
                     command.Parameters.AddWithValue("@cost_analysis_id", analysisId);
@@ -205,6 +208,7 @@ INSERT INTO cost_analysis_items (
                     command.Parameters.AddWithValue("@purchase_unit_price", DbDecimal(ReadCellDecimal(row, "PurchaseUnitPrice")));
                     command.Parameters.AddWithValue("@total_quantity", DbDecimal(ReadCellDecimal(row, "TotalQuantity")));
                     command.Parameters.AddWithValue("@total_price", DbDecimal(ReadCellDecimal(row, "TotalPrice")));
+                    command.Parameters.AddWithValue("@price_tiers_json", SerializePriceTiers(row.Tag as List<PriceTier>));
                     command.ExecuteNonQuery();
                 }
             }
@@ -265,6 +269,71 @@ INSERT INTO cost_analysis_items (
         {
             return reader[name] == DBNull.Value ? (decimal?)null : Convert.ToDecimal(reader[name]);
         }
+
+        private static string SerializePriceTiers(List<PriceTier> tiers)
+        {
+            if (tiers == null || tiers.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var dto = new List<PriceTierDto>();
+            foreach (var tier in tiers)
+            {
+                dto.Add(new PriceTierDto
+                {
+                    Label = tier.Label,
+                    MinQuantity = tier.MinQuantity,
+                    MaxQuantity = tier.MaxQuantity,
+                    UnitPrice = tier.UnitPrice
+                });
+            }
+
+            return new JavaScriptSerializer().Serialize(dto);
+        }
+
+        private static List<PriceTier> DeserializePriceTiers(string json)
+        {
+            var result = new List<PriceTier>();
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return result;
+            }
+
+            try
+            {
+                var dto = new JavaScriptSerializer().Deserialize<List<PriceTierDto>>(json);
+                if (dto == null)
+                {
+                    return result;
+                }
+
+                foreach (var tier in dto)
+                {
+                    result.Add(new PriceTier
+                    {
+                        Label = tier.Label,
+                        MinQuantity = tier.MinQuantity,
+                        MaxQuantity = tier.MaxQuantity,
+                        UnitPrice = tier.UnitPrice
+                    });
+                }
+            }
+            catch
+            {
+                return new List<PriceTier>();
+            }
+
+            return result;
+        }
+
+        private sealed class PriceTierDto
+        {
+            public string Label { get; set; }
+            public int? MinQuantity { get; set; }
+            public int? MaxQuantity { get; set; }
+            public decimal? UnitPrice { get; set; }
+        }
     }
 
     internal sealed class CostAnalysisSummary
@@ -321,5 +390,6 @@ INSERT INTO cost_analysis_items (
         public decimal? PurchaseUnitPrice { get; set; }
         public decimal? TotalQuantity { get; set; }
         public decimal? TotalPrice { get; set; }
+        public List<PriceTier> PriceTiers { get; set; }
     }
 }

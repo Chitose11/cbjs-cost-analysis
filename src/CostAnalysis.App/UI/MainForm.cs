@@ -25,6 +25,7 @@ namespace CostAnalysis.App.UI
         private readonly TextBox _dateTextBox;
         private readonly TextBox _taxTextBox;
         private readonly TextBox _freightTextBox;
+        private ListBox _recentAnalysesListBox;
 
         public MainForm()
         {
@@ -72,6 +73,7 @@ namespace CostAnalysis.App.UI
             var layout = (TableLayoutPanel)workspace.Controls[0];
             layout.Controls.Add(_grid, 0, 3);
             layout.Controls.Add(_statusLabel, 0, 4);
+            RefreshRecentAnalysesList();
         }
 
         private Control BuildSidebar()
@@ -83,31 +85,77 @@ namespace CostAnalysis.App.UI
                 Padding = new Padding(14)
             };
 
+            var layout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                RowCount = 5,
+                ColumnCount = 1,
+                BackColor = _panel
+            };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 292));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            sidebar.Controls.Add(layout);
+
             var title = new Label
             {
                 Text = "成本分析",
                 ForeColor = _ink,
                 Font = new Font("Microsoft YaHei UI", 15F, FontStyle.Bold),
-                Dock = DockStyle.Top,
-                Height = 48
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft
             };
-            sidebar.Controls.Add(title);
+            layout.Controls.Add(title, 0, 0);
 
             var menu = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
-                Padding = new Padding(0, 12, 0, 0)
+                Padding = new Padding(0, 12, 0, 0),
+                AutoScroll = false
             };
-            sidebar.Controls.Add(menu);
-            menu.BringToFront();
+            layout.Controls.Add(menu, 0, 1);
 
-            AddMenuButton(menu, "成本分析列表", null);
+            AddMenuButton(menu, "成本分析列表", (_, __) => RefreshRecentAnalysesList());
             AddMenuButton(menu, "报价单导入", OnImportQuote);
             AddMenuButton(menu, "批量预扫描", OnBatchScanQuotes);
             AddMenuButton(menu, "材料库", OnOpenMaterials);
+            AddMenuButton(menu, "工艺规则", OnOpenProcessRules);
             AddMenuButton(menu, "系统设置", OnOpenAiSettings);
+
+            layout.Controls.Add(new Label
+            {
+                Text = "最近单据",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.BottomLeft,
+                ForeColor = _muted
+            }, 0, 2);
+
+            _recentAnalysesListBox = new ListBox
+            {
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.FixedSingle,
+                DisplayMember = "DisplayText",
+                IntegralHeight = false
+            };
+            _recentAnalysesListBox.DoubleClick += OnRecentAnalysisDoubleClick;
+            layout.Controls.Add(_recentAnalysesListBox, 0, 3);
+
+            var refresh = new Button
+            {
+                Text = "刷新列表",
+                Dock = DockStyle.Fill,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = _blue,
+                BackColor = Color.White,
+                Margin = new Padding(0, 8, 0, 0)
+            };
+            refresh.FlatAppearance.BorderColor = Color.FromArgb(210, 210, 215);
+            refresh.Click += (_, __) => RefreshRecentAnalysesList();
+            layout.Controls.Add(refresh, 0, 4);
 
             return sidebar;
         }
@@ -159,6 +207,8 @@ namespace CostAnalysis.App.UI
             AddSecondaryButton(toolbar, "批量预扫描", OnBatchScanQuotes);
             AddSecondaryButton(toolbar, "新增明细", OnAddRow);
             AddSecondaryButton(toolbar, "删除明细", OnDeleteSelectedRows);
+            AddSecondaryButton(toolbar, "编辑阶梯价", OnEditRowPriceTiers);
+            AddSecondaryButton(toolbar, "应用工艺规则", OnApplyProcessRules);
             AddSecondaryButton(toolbar, "保存", OnSaveAnalysis);
             AddSecondaryButton(toolbar, "打开", OnOpenAnalysis);
             AddSecondaryButton(toolbar, "导出 Excel", OnExportExcelPlaceholder);
@@ -216,7 +266,7 @@ namespace CostAnalysis.App.UI
             {
                 Dock = DockStyle.Fill,
                 AllowUserToAddRows = false,
-                AllowUserToDeleteRows = true,
+                AllowUserToDeleteRows = false,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
                 BackgroundColor = Color.White,
                 BorderStyle = BorderStyle.FixedSingle,
@@ -265,6 +315,7 @@ namespace CostAnalysis.App.UI
             grid.CurrentCellDirtyStateChanged += OnGridCurrentCellDirtyStateChanged;
             grid.CellValueChanged += OnGridCellValueChanged;
             grid.CellMouseDown += OnGridCellMouseDown;
+            grid.ColumnHeaderMouseClick += OnGridColumnHeaderMouseClick;
             grid.ContextMenuStrip = BuildGridContextMenu();
             return grid;
         }
@@ -436,8 +487,64 @@ namespace CostAnalysis.App.UI
         private ContextMenuStrip BuildGridContextMenu()
         {
             var menu = new ContextMenuStrip();
+            menu.Items.Add("编辑阶梯价", null, OnEditRowPriceTiers);
+            menu.Items.Add("-");
             menu.Items.Add("删除明细", null, OnDeleteSelectedRows);
             return menu;
+        }
+
+        private void OnEditRowPriceTiers(object sender, EventArgs e)
+        {
+            var row = GetCurrentDataRow();
+            if (row == null)
+            {
+                MessageBox.Show(this, "请先选择一条明细行。", "编辑阶梯价格", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var existingTiers = row.Tag as System.Collections.Generic.List<PriceTier>;
+            using (var form = new PriceTiersForm(existingTiers))
+            {
+                if (form.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                row.Tag = form.PriceTiers;
+                RecalculateRows();
+                row.Cells["PurchaseUnitPrice"].Style.BackColor = Color.FromArgb(232, 244, 255);
+                row.Cells["PurchaseUnitPrice"].ToolTipText = "采购单价已按阶梯价格重新匹配";
+                row.Cells["ValidationStatus"].Value = "阶梯价已更新";
+                _statusLabel.Text = "已更新当前行阶梯价格，并按总用量重新匹配采购单价。";
+            }
+        }
+
+        private DataGridViewRow GetCurrentDataRow()
+        {
+            if (_grid.CurrentCell != null)
+            {
+                var row = _grid.Rows[_grid.CurrentCell.RowIndex];
+                if (!row.IsNewRow)
+                {
+                    return row;
+                }
+            }
+
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row.IsNewRow)
+                {
+                    continue;
+                }
+
+                var checkedValue = row.Cells["Selected"].Value;
+                if (checkedValue is bool && (bool)checkedValue)
+                {
+                    return row;
+                }
+            }
+
+            return null;
         }
 
         private void OnGridCellMouseDown(object sender, DataGridViewCellMouseEventArgs e)
@@ -474,10 +581,33 @@ namespace CostAnalysis.App.UI
             if (columnName == "Selected")
             {
                 ApplyCheckedRowStyle(_grid.Rows[e.RowIndex]);
+                UpdateSelectedRowsStatus();
                 return;
             }
 
             RecalculateRows();
+        }
+
+        private void OnGridColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.ColumnIndex < 0 || _grid.Columns[e.ColumnIndex].Name != "Selected")
+            {
+                return;
+            }
+
+            var shouldCheck = !AllDataRowsChecked();
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row.IsNewRow)
+                {
+                    continue;
+                }
+
+                row.Cells["Selected"].Value = shouldCheck;
+                ApplyCheckedRowStyle(row);
+            }
+
+            UpdateSelectedRowsStatus();
         }
 
         private void ApplyCheckedRowStyles()
@@ -518,12 +648,119 @@ namespace CostAnalysis.App.UI
                    string.Equals(Convert.ToString(value), "1", StringComparison.OrdinalIgnoreCase);
         }
 
+        private bool AllDataRowsChecked()
+        {
+            var hasRows = false;
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row.IsNewRow)
+                {
+                    continue;
+                }
+
+                hasRows = true;
+                if (!IsRowChecked(row))
+                {
+                    return false;
+                }
+            }
+
+            return hasRows;
+        }
+
+        private int CountCheckedRows()
+        {
+            var count = 0;
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (!row.IsNewRow && IsRowChecked(row))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private void UpdateSelectedRowsStatus()
+        {
+            var count = CountCheckedRows();
+            _statusLabel.Text = count == 0 ? "未选择明细行。" : "已选择 " + count + " 行明细，可点击“删除明细”。";
+        }
+
         private void OnOpenMaterials(object sender, EventArgs e)
         {
             using (var form = new MaterialsForm())
             {
                 form.ShowDialog(this);
             }
+        }
+
+        private void OnOpenProcessRules(object sender, EventArgs e)
+        {
+            using (var form = new ProcessCostRulesForm())
+            {
+                if (form.ShowDialog(this) == DialogResult.OK)
+                {
+                    _statusLabel.Text = "工艺费用规则已更新。";
+                }
+            }
+        }
+
+        private void OnApplyProcessRules(object sender, EventArgs e)
+        {
+            var rows = GetSelectedDataRows();
+            if (rows.Count == 0)
+            {
+                foreach (DataGridViewRow row in _grid.Rows)
+                {
+                    if (!row.IsNewRow)
+                    {
+                        rows.Add(row);
+                    }
+                }
+            }
+
+            var changed = ApplyProcessRulesToRows(rows);
+            RecalculateRows();
+            _statusLabel.Text = "已应用工艺规则，更新费用单元格 " + changed + " 个。";
+        }
+
+        private int ApplyProcessRulesToRows(System.Collections.Generic.List<DataGridViewRow> rows)
+        {
+            var changed = 0;
+            var repository = new ProcessCostRuleRepository();
+            foreach (var row in rows)
+            {
+                var text = Convert.ToString(row.Cells["MaterialDescription"].Value);
+                var matches = repository.FindMatches(text);
+                foreach (var rule in matches)
+                {
+                    if (!rule.Amount.HasValue)
+                    {
+                        continue;
+                    }
+
+                    var columnName = NormalizeRuleCostColumn(rule.CostType);
+                    if (string.IsNullOrWhiteSpace(Convert.ToString(row.Cells[columnName].Value)))
+                    {
+                        row.Cells[columnName].Value = rule.Amount.Value.ToString("0.####");
+                        row.Cells[columnName].Style.BackColor = Color.FromArgb(232, 244, 255);
+                        row.Cells[columnName].ToolTipText = "由工艺规则匹配：" + rule.Keyword;
+                        changed++;
+                    }
+                }
+            }
+
+            return changed;
+        }
+
+        private static string NormalizeRuleCostColumn(string costType)
+        {
+            if (costType == "PrintingCost") return "PrintingCost";
+            if (costType == "OtherCost") return "OtherCost";
+            if (costType == "MaterialCost") return "MaterialCost";
+            return "PostProcessCost";
         }
 
         private void OnOpenAiSettings(object sender, EventArgs e)
@@ -568,6 +805,7 @@ namespace CostAnalysis.App.UI
             {
                 var id = new CostAnalysisRepository().SaveFromGrid(ReadHeader(), _grid);
                 _statusLabel.Text = "已保存成本分析单，ID=" + id;
+                RefreshRecentAnalysesList();
                 MessageBox.Show(this, "保存完成。", "保存", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
@@ -596,15 +834,65 @@ namespace CostAnalysis.App.UI
                     }
 
                     var analysis = repository.GetAnalysis(dialog.SelectedAnalysisId.Value);
-                    LoadHeader(analysis.Header);
-                    LoadSavedItems(analysis.Items);
-                    _statusLabel.Text = "已打开成本分析单，ID=" + dialog.SelectedAnalysisId.Value + "，明细 " + analysis.Items.Count + " 条。";
+                    OpenAnalysis(dialog.SelectedAnalysisId.Value, analysis);
                 }
             }
             catch (Exception ex)
             {
                 MessageBox.Show(this, ex.Message, "打开失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+        }
+
+        private void RefreshRecentAnalysesList()
+        {
+            if (_recentAnalysesListBox == null)
+            {
+                return;
+            }
+
+            try
+            {
+                _recentAnalysesListBox.BeginUpdate();
+                _recentAnalysesListBox.Items.Clear();
+                foreach (var item in new CostAnalysisRepository().GetRecentAnalyses())
+                {
+                    _recentAnalysesListBox.Items.Add(item);
+                }
+            }
+            catch (Exception ex)
+            {
+                _statusLabel.Text = "刷新成本分析列表失败：" + ex.Message;
+            }
+            finally
+            {
+                _recentAnalysesListBox.EndUpdate();
+            }
+        }
+
+        private void OnRecentAnalysisDoubleClick(object sender, EventArgs e)
+        {
+            var selected = _recentAnalysesListBox.SelectedItem as CostAnalysisSummary;
+            if (selected == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var analysis = new CostAnalysisRepository().GetAnalysis(selected.Id);
+                OpenAnalysis(selected.Id, analysis);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "打开失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void OpenAnalysis(int analysisId, SavedCostAnalysis analysis)
+        {
+            LoadHeader(analysis.Header);
+            LoadSavedItems(analysis.Items);
+            _statusLabel.Text = "已打开成本分析单，ID=" + analysisId + "，明细 " + analysis.Items.Count + " 条。";
         }
 
         private void RecalculateRows()
@@ -768,7 +1056,22 @@ namespace CostAnalysis.App.UI
                 }
             }
 
+            ApplyProcessRulesToRows(GetRowsByStartIndex(_grid.Rows.Count - items.Count));
             RecalculateRows();
+        }
+
+        private System.Collections.Generic.List<DataGridViewRow> GetRowsByStartIndex(int startIndex)
+        {
+            var rows = new System.Collections.Generic.List<DataGridViewRow>();
+            for (var index = Math.Max(0, startIndex); index < _grid.Rows.Count; index++)
+            {
+                if (!_grid.Rows[index].IsNewRow)
+                {
+                    rows.Add(_grid.Rows[index]);
+                }
+            }
+
+            return rows;
         }
 
         private CostAnalysisHeader ReadHeader()
@@ -819,9 +1122,14 @@ namespace CostAnalysis.App.UI
                 row.Cells["PurchaseUnitPrice"].Value = FormatDecimal(item.PurchaseUnitPrice);
                 row.Cells["TotalQuantity"].Value = FormatDecimal(item.TotalQuantity);
                 row.Cells["TotalPrice"].Value = FormatDecimal(item.TotalPrice);
+                if (item.PriceTiers != null && item.PriceTiers.Count > 0)
+                {
+                    row.Tag = item.PriceTiers;
+                    row.Cells["PurchaseUnitPrice"].ToolTipText = "已恢复保存的阶梯价格";
+                }
             }
 
-            ValidateGrid();
+            RecalculateRows();
         }
 
         private void ApplyMaterialMatch(DataGridViewRow row, string materialName)

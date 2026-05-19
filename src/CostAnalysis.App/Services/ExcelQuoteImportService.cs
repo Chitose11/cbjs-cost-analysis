@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
@@ -29,21 +30,70 @@ namespace CostAnalysis.App.Services
                 throw new ArgumentException("请选择报价单文件。", "filePath");
             }
 
+            Exception xlsxReadException = null;
+            if (string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var xlsxPreview = ImportXlsxWithoutExcel(filePath);
+                    if (xlsxPreview != null && xlsxPreview.Items.Count > 0)
+                    {
+                        return xlsxPreview;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    xlsxReadException = ex;
+                }
+            }
+
             var excelType = Type.GetTypeFromProgID("Excel.Application");
             if (excelType == null)
             {
-                throw new InvalidOperationException("当前系统没有可用的 Excel COM。后续版本会加入纯文件读取库。");
+                if (string.Equals(Path.GetExtension(filePath), ".xlsx", StringComparison.OrdinalIgnoreCase) && xlsxReadException == null)
+                {
+                    return CreateEmptyPreview(filePath);
+                }
+
+                throw new InvalidOperationException("当前系统没有可用的 Excel COM，老版 .xls 报价单仍需要通过 Excel 兼容读取。", xlsxReadException);
             }
 
-            dynamic excel = null;
-            dynamic workbook = null;
-            var preview = new QuoteImportPreview
+            return ImportWithExcelCom(filePath, excelType);
+        }
+
+        private static QuoteImportPreview CreateEmptyPreview(string filePath)
+        {
+            return new QuoteImportPreview
             {
                 FilePath = filePath,
                 TemplateType = "待识别",
                 Confidence = 0,
                 Items = new List<QuoteImportItem>()
             };
+        }
+
+        private static QuoteImportPreview ImportXlsxWithoutExcel(string filePath)
+        {
+            var preview = CreateEmptyPreview(filePath);
+            var snapshots = new LightweightXlsxReader().ReadSheets(filePath);
+            foreach (var snapshot in snapshots)
+            {
+                var candidate = ReadCellsAsPreview(snapshot.Name, snapshot.Cells, snapshot.Rows, snapshot.Columns);
+                if (candidate != null && candidate.Confidence > preview.Confidence)
+                {
+                    candidate.FilePath = filePath;
+                    preview = candidate;
+                }
+            }
+
+            return preview;
+        }
+
+        private static QuoteImportPreview ImportWithExcelCom(string filePath, Type excelType)
+        {
+            dynamic excel = null;
+            dynamic workbook = null;
+            var preview = CreateEmptyPreview(filePath);
 
             try
             {
@@ -144,90 +194,7 @@ namespace CostAnalysis.App.Services
                 var rows = Math.Min((int)usedRange.Rows.Count, 80);
                 var cols = Math.Min((int)usedRange.Columns.Count, 30);
                 var cells = ReadCells(sheet, rows, cols);
-                var header = FindHeader(cells, rows, cols);
-                if (header == null)
-                {
-                    return null;
-                }
-
-                var preview = new QuoteImportPreview
-                {
-                    SheetName = Convert.ToString(sheet.Name),
-                    Supplier = FindSupplier(cells, rows, cols),
-                    QuoteDate = FindFirst(DateRegex, cells, rows, cols, "date"),
-                    QuoteNo = FindFirst(QuoteNoRegex, cells, rows, cols, "no"),
-                    TemplateType = header.TemplateType,
-                    Confidence = Math.Min(1, header.Score / 6.0),
-                    HeaderRow = header.Row,
-                    QuantityRow = header.QuantityRow,
-                    DataStartRow = header.DataStartRow,
-                    Items = new List<QuoteImportItem>()
-                };
-
-                for (var row = header.DataStartRow; row <= rows; row++)
-                {
-                    var first = Get(cells, row, header.NoColumn);
-                    var nameText = Get(cells, row, header.NameColumn);
-                    if (ContainsAny(nameText, "以下空白") || ContainsAny(first, "以下空白"))
-                    {
-                        break;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(nameText))
-                    {
-                        continue;
-                    }
-
-                    if (header.NoColumn > 0 && !string.IsNullOrWhiteSpace(first) && !IsSequenceCell(first))
-                    {
-                        continue;
-                    }
-
-                    var split = SplitCodeAndName(nameText);
-                    var process = Get(cells, row, header.ProcessColumn);
-                    var size = Get(cells, row, header.SizeColumn);
-                    if (string.IsNullOrWhiteSpace(size))
-                    {
-                        size = ExtractSize(process);
-                    }
-
-                    var item = new QuoteImportItem
-                    {
-                        RawName = nameText,
-                        MaterialCode = split.Code,
-                        MaterialName = split.Name,
-                        FinishedSize = size,
-                        MaterialProcess = process,
-                        MaterialNameExtracted = ExtractMaterialName(process),
-                        GramWeight = ExtractGramWeight(process),
-                        UsageQuantity = ParseDecimal(Get(cells, row, header.UsageColumn)),
-                        PriceTiers = new List<PriceTier>()
-                    };
-
-                    foreach (var priceColumn in header.PriceColumns)
-                    {
-                        decimal? unitPrice = ParseDecimal(Get(cells, row, priceColumn.Column));
-                        if (!unitPrice.HasValue)
-                        {
-                            continue;
-                        }
-
-                        item.PriceTiers.Add(new PriceTier
-                        {
-                            Label = priceColumn.Label,
-                            MinQuantity = priceColumn.MinQuantity,
-                            MaxQuantity = priceColumn.MaxQuantity,
-                            UnitPrice = unitPrice
-                        });
-                    }
-
-                    if (item.PriceTiers.Count > 0)
-                    {
-                        preview.Items.Add(item);
-                    }
-                }
-
-                return preview.Items.Count > 0 ? preview : null;
+                return ReadCellsAsPreview(Convert.ToString(sheet.Name), cells, rows, cols);
             }
             finally
             {
@@ -236,6 +203,95 @@ namespace CostAnalysis.App.Services
                     ReleaseCom(usedRange);
                 }
             }
+        }
+
+        private static QuoteImportPreview ReadCellsAsPreview(string sheetName, string[,] cells, int rows, int cols)
+        {
+            var header = FindHeader(cells, rows, cols);
+            if (header == null)
+            {
+                return null;
+            }
+
+            var preview = new QuoteImportPreview
+            {
+                SheetName = sheetName,
+                Supplier = FindSupplier(cells, rows, cols),
+                QuoteDate = FindFirst(DateRegex, cells, rows, cols, "date"),
+                QuoteNo = FindFirst(QuoteNoRegex, cells, rows, cols, "no"),
+                TemplateType = header.TemplateType,
+                Confidence = Math.Min(1, header.Score / 6.0),
+                HeaderRow = header.Row,
+                QuantityRow = header.QuantityRow,
+                DataStartRow = header.DataStartRow,
+                RawSheet = QuoteRawSheetPreview.FromCells(cells, rows, cols),
+                Items = new List<QuoteImportItem>()
+            };
+
+            for (var row = header.DataStartRow; row <= rows; row++)
+            {
+                var first = Get(cells, row, header.NoColumn);
+                var nameText = Get(cells, row, header.NameColumn);
+                if (ContainsAny(nameText, "以下空白") || ContainsAny(first, "以下空白"))
+                {
+                    break;
+                }
+
+                if (string.IsNullOrWhiteSpace(nameText))
+                {
+                    continue;
+                }
+
+                if (header.NoColumn > 0 && !string.IsNullOrWhiteSpace(first) && !IsSequenceCell(first))
+                {
+                    continue;
+                }
+
+                var split = SplitCodeAndName(nameText);
+                var process = Get(cells, row, header.ProcessColumn);
+                var size = Get(cells, row, header.SizeColumn);
+                if (string.IsNullOrWhiteSpace(size))
+                {
+                    size = ExtractSize(process);
+                }
+
+                var item = new QuoteImportItem
+                {
+                    RawName = nameText,
+                    MaterialCode = split.Code,
+                    MaterialName = split.Name,
+                    FinishedSize = size,
+                    MaterialProcess = process,
+                    MaterialNameExtracted = ExtractMaterialName(process),
+                    GramWeight = ExtractGramWeight(process),
+                    UsageQuantity = ParseDecimal(Get(cells, row, header.UsageColumn)),
+                    PriceTiers = new List<PriceTier>()
+                };
+
+                foreach (var priceColumn in header.PriceColumns)
+                {
+                    decimal? unitPrice = ParseDecimal(Get(cells, row, priceColumn.Column));
+                    if (!unitPrice.HasValue)
+                    {
+                        continue;
+                    }
+
+                    item.PriceTiers.Add(new PriceTier
+                    {
+                        Label = priceColumn.Label,
+                        MinQuantity = priceColumn.MinQuantity,
+                        MaxQuantity = priceColumn.MaxQuantity,
+                        UnitPrice = unitPrice
+                    });
+                }
+
+                if (item.PriceTiers.Count > 0)
+                {
+                    preview.Items.Add(item);
+                }
+            }
+
+            return preview.Items.Count > 0 ? preview : null;
         }
 
         private static string[,] ReadCells(dynamic sheet, int rows, int cols)
@@ -579,7 +635,34 @@ namespace CostAnalysis.App.Services
         public int HeaderRow { get; set; }
         public int QuantityRow { get; set; }
         public int DataStartRow { get; set; }
+        public QuoteRawSheetPreview RawSheet { get; set; }
         public List<QuoteImportItem> Items { get; set; }
+    }
+
+    internal sealed class QuoteRawSheetPreview
+    {
+        public int Rows { get; set; }
+        public int Columns { get; set; }
+        public string[,] Cells { get; set; }
+
+        public static QuoteRawSheetPreview FromCells(string[,] cells, int rows, int columns)
+        {
+            var copy = new string[rows + 1, columns + 1];
+            for (var row = 1; row <= rows; row++)
+            {
+                for (var column = 1; column <= columns; column++)
+                {
+                    copy[row, column] = cells[row, column];
+                }
+            }
+
+            return new QuoteRawSheetPreview
+            {
+                Rows = rows,
+                Columns = columns,
+                Cells = copy
+            };
+        }
     }
 
     internal sealed class QuoteImportItem
