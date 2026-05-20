@@ -35,12 +35,12 @@ namespace CostAnalysis.App.Services
             var extension = Path.GetExtension(filePath);
             if (IsPdf(extension))
             {
-                return ImportPdfTextPreview(filePath);
+                return ImportPdfAutoPreview(filePath);
             }
 
             if (IsImage(extension))
             {
-                return ImportImagePlaceholder(filePath);
+                return ImportImageOcrPreview(filePath);
             }
 
             Exception xlsxReadException = null;
@@ -96,6 +96,51 @@ namespace CostAnalysis.App.Services
                    string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(extension, ".jpeg", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(extension, ".bmp", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static QuoteImportPreview ImportPdfAutoPreview(string filePath)
+        {
+            var lines = new ExternalTextExtractionService().ExtractPdfTextLines(filePath);
+            if (lines.Count == 0)
+            {
+                lines = ExtractPdfTextLines(filePath);
+            }
+
+            if (lines.Count == 0)
+            {
+                lines.Add("未从 PDF 中提取到可靠文本，当前 PDF 可能是扫描件或使用了无法反解的内嵌字体编码。");
+                lines.Add("建议：安装 Poppler 的 pdftotext 后重试；如果是扫描件，请安装 tesseract OCR 或把 OCR 文本保存为同名 .txt 后重新导入。");
+            }
+
+            var preview = CreateDocumentPreview(filePath, "PDF自动解析", lines);
+            preview.Items = DocumentQuoteTextParser.Parse(lines);
+            if (preview.Items.Count > 0)
+            {
+                preview.Confidence = 0.55;
+                preview.TemplateType = "PDF自动解析";
+            }
+
+            return preview;
+        }
+
+        private static QuoteImportPreview ImportImageOcrPreview(string filePath)
+        {
+            var lines = new ExternalTextExtractionService().ExtractImageTextLines(filePath);
+            if (lines.Count == 0)
+            {
+                lines.Add("图片文件：" + Path.GetFileName(filePath));
+                lines.Add("未检测到可用 OCR 文本。可安装 tesseract OCR，或放置同名 .txt 文本后重新导入。");
+            }
+
+            var preview = CreateDocumentPreview(filePath, "图片OCR自动解析", lines);
+            preview.Items = DocumentQuoteTextParser.Parse(lines);
+            if (preview.Items.Count > 0)
+            {
+                preview.Confidence = 0.45;
+                preview.TemplateType = "图片OCR自动解析";
+            }
+
+            return preview;
         }
 
         private static QuoteImportPreview ImportPdfTextPreview(string filePath)
@@ -278,7 +323,12 @@ namespace CostAnalysis.App.Services
             foreach (var fragment in fragments)
             {
                 var cleaned = Clean(fragment);
-                if (string.IsNullOrWhiteSpace(cleaned) || cleaned.Length <= 2 || LooksLikeEncodedGlyph(cleaned) || !HasReadableText(cleaned))
+                if (string.IsNullOrWhiteSpace(cleaned) ||
+                    cleaned.Length <= 2 ||
+                    LooksLikeEncodedGlyph(cleaned) ||
+                    LooksLikePdfMetadata(cleaned) ||
+                    LooksLikePdfEncodedNoise(cleaned) ||
+                    !HasReadableText(cleaned))
                 {
                     continue;
                 }
@@ -310,6 +360,85 @@ namespace CostAnalysis.App.Services
         private static bool LooksLikeEncodedGlyph(string value)
         {
             return Regex.IsMatch(value ?? string.Empty, @"^[0-9A-Fa-f]{2,6}$");
+        }
+
+        private static bool LooksLikePdfEncodedNoise(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return true;
+            }
+
+            var controlOrReplacement = 0;
+            var latinExtended = 0;
+            var symbol = 0;
+            var chinese = 0;
+            var digit = 0;
+            foreach (var ch in value)
+            {
+                if (char.IsControl(ch) || ch == '\ufffd')
+                {
+                    controlOrReplacement++;
+                }
+
+                if (ch >= 0x00c0 && ch <= 0x024f)
+                {
+                    latinExtended++;
+                }
+
+                if (!char.IsLetterOrDigit(ch) && !char.IsWhiteSpace(ch) && !IsChinese(ch))
+                {
+                    symbol++;
+                }
+
+                if (IsChinese(ch))
+                {
+                    chinese++;
+                }
+
+                if (char.IsDigit(ch))
+                {
+                    digit++;
+                }
+            }
+
+            var length = Math.Max(1, value.Length);
+            if (controlOrReplacement > 0)
+            {
+                return true;
+            }
+
+            if (chinese == 0 && digit == 0 && latinExtended * 1.0 / length > 0.15)
+            {
+                return true;
+            }
+
+            if (chinese == 0 && digit == 0 && symbol * 1.0 / length > 0.35)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool LooksLikePdfMetadata(string value)
+        {
+            var text = (value ?? string.Empty).Trim();
+            if (text.StartsWith("D:", StringComparison.OrdinalIgnoreCase) &&
+                Regex.IsMatch(text, @"^D:\d{8,}"))
+            {
+                return true;
+            }
+
+            if (text.IndexOf("KONICA MINOLTA", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("bizhub", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("Adobe", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("Acrobat", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static bool IsChinese(char ch)
@@ -576,6 +705,15 @@ namespace CostAnalysis.App.Services
                 {
                     process = BuildCartonProcess(cells, row, header);
                 }
+                else if (!string.IsNullOrWhiteSpace(process) && header.IsCartonTemplate)
+                {
+                    var cartonProcess = BuildCartonProcess(cells, row, header);
+                    if (!string.IsNullOrWhiteSpace(cartonProcess) &&
+                        process.IndexOf(cartonProcess, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        process = process + "；" + cartonProcess;
+                    }
+                }
                 else if (string.IsNullOrWhiteSpace(process) && header.IsPaperboardBaseTemplate)
                 {
                     process = BuildPaperboardProcess(cells, row, header);
@@ -719,12 +857,14 @@ namespace CostAnalysis.App.Services
                 {
                     candidate.TotalLengthColumn = col;
                     candidate.TotalLengthExtraInch = ExtractExtraInch(text);
+                    candidate.TotalLengthInInch = IsInchHeader(text);
                     candidate.Score++;
                 }
                 else if (ContainsAny(text, "总宽", "展开总宽"))
                 {
                     candidate.TotalWidthColumn = col;
                     candidate.TotalWidthExtraInch = ExtractExtraInch(text);
+                    candidate.TotalWidthInInch = IsInchHeader(text);
                     candidate.Score++;
                 }
                 else if (ContainsAny(text, "基价"))
@@ -750,6 +890,11 @@ namespace CostAnalysis.App.Services
                 else if (ContainsAny(text, "材质/工艺", "材质工艺", "规格描述", "材质"))
                 {
                     candidate.ProcessColumn = col;
+                    candidate.Score++;
+                }
+                else if (ContainsAny(text, "公式", "计价公式", "计算公式"))
+                {
+                    candidate.FormulaColumn = col;
                     candidate.Score++;
                 }
                 else if (ContainsAny(text, "数量", "报价", "单价") || LooksLikeQuantityLabel(text))
@@ -913,6 +1058,7 @@ namespace CostAnalysis.App.Services
             AddPart(parts, "耐破", Get(cells, row, header.BurstColumn));
             AddPart(parts, "边压", Get(cells, row, header.EdgeColumn));
             AddPart(parts, "基价", Get(cells, row, header.BasePriceColumn));
+
             return string.Join("；", parts.ToArray());
         }
 
@@ -968,13 +1114,23 @@ namespace CostAnalysis.App.Services
                 return string.Empty;
             }
 
-            return length + "*" + width + "MM";
+            var unit = header.TotalLengthInInch || header.TotalWidthInInch ? "inch" : "MM";
+            return length + "*" + width + unit;
         }
 
         private static string BuildCartonProcess(string[,] cells, int row, HeaderCandidate header)
         {
             var parts = new List<string>();
             var basePrice = Get(cells, row, header.BasePriceColumn);
+            if (string.IsNullOrWhiteSpace(basePrice))
+            {
+                var lookedUpBasePrice = LookupCartonBasePrice(cells, row, header);
+                if (lookedUpBasePrice.HasValue)
+                {
+                    basePrice = lookedUpBasePrice.Value.ToString("0.####");
+                }
+            }
+
             if (!string.IsNullOrWhiteSpace(basePrice))
             {
                 parts.Add("基价 " + basePrice + " 元/千平方英寸");
@@ -992,7 +1148,24 @@ namespace CostAnalysis.App.Services
                 parts.Add("公式加放 长+" + header.TotalLengthExtraInch.ToString("0.####") + "英寸，宽+" + header.TotalWidthExtraInch.ToString("0.####") + "英寸");
             }
 
+            AddCartonFormulaParts(parts, cells, row, header);
+
             return string.Join("；", parts.ToArray());
+        }
+
+        private static void AddCartonFormulaParts(List<string> parts, string[,] cells, int row, HeaderCandidate header)
+        {
+            var formula = Get(cells, row, header.FormulaColumn);
+            if (!string.IsNullOrWhiteSpace(formula))
+            {
+                parts.Add("计价公式 " + formula);
+            }
+
+            var calculated = CalculateCartonUnitPrice(cells, row, header);
+            if (calculated.HasValue)
+            {
+                parts.Add("公式核价 " + calculated.Value.ToString("0.####"));
+            }
         }
 
         private static decimal? CalculateCartonUnitPrice(string[,] cells, int row, HeaderCandidate header)
@@ -1000,19 +1173,82 @@ namespace CostAnalysis.App.Services
             var lengthMm = ParseDecimal(Get(cells, row, header.TotalLengthColumn));
             var widthMm = ParseDecimal(Get(cells, row, header.TotalWidthColumn));
             var basePrice = ParseDecimal(Get(cells, row, header.BasePriceColumn));
+            if (!basePrice.HasValue)
+            {
+                basePrice = LookupCartonBasePrice(cells, row, header);
+            }
+
             if (!lengthMm.HasValue || !widthMm.HasValue || !basePrice.HasValue)
             {
                 return null;
             }
 
-            var lengthInch = lengthMm.Value / 25.4M + header.TotalLengthExtraInch;
-            var widthInch = widthMm.Value / 25.4M + header.TotalWidthExtraInch;
+            var lengthInch = ConvertCartonLengthToInch(lengthMm.Value, header.TotalLengthInInch) + header.TotalLengthExtraInch;
+            var widthInch = ConvertCartonLengthToInch(widthMm.Value, header.TotalWidthInInch) + header.TotalWidthExtraInch;
             if (lengthInch <= 0 || widthInch <= 0)
             {
                 return null;
             }
 
             return Math.Round(lengthInch * widthInch * basePrice.Value / 1000M, 4);
+        }
+
+        private static decimal ConvertCartonLengthToInch(decimal value, bool alreadyInInch)
+        {
+            return alreadyInInch ? value : value / 25.4M;
+        }
+
+        private static decimal? LookupCartonBasePrice(string[,] cells, int row, HeaderCandidate header)
+        {
+            var materialType = Get(cells, row, header.ProcessColumn);
+            if (string.IsNullOrWhiteSpace(materialType))
+            {
+                materialType = Get(cells, row, header.MaterialTypeColumn);
+            }
+
+            return LookupBasePriceByMaterialType(cells, materialType, header.Row);
+        }
+
+        private static decimal? LookupBasePriceByMaterialType(string[,] cells, string materialType, int beforeRow)
+        {
+            var normalizedMaterial = NormalizeForMatch(materialType);
+            if (string.IsNullOrWhiteSpace(normalizedMaterial))
+            {
+                return null;
+            }
+
+            var maxRow = Math.Min(beforeRow <= 0 ? cells.GetLength(0) - 1 : beforeRow - 1, cells.GetLength(0) - 1);
+            for (var row = 1; row <= maxRow; row++)
+            {
+                for (var col = 1; col < cells.GetLength(1); col++)
+                {
+                    if (NormalizeForMatch(Get(cells, row, col)) != normalizedMaterial)
+                    {
+                        continue;
+                    }
+
+                    for (var priceCol = col + 1; priceCol < cells.GetLength(1) && priceCol <= col + 5; priceCol++)
+                    {
+                        var price = ParseDecimal(Get(cells, row, priceCol));
+                        if (price.HasValue && price.Value > 0)
+                        {
+                            return price;
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static string NormalizeForMatch(string value)
+        {
+            return (value ?? string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
+        }
+
+        private static bool IsInchHeader(string headerText)
+        {
+            return ContainsAny(headerText, "鑻卞", "英寸", "inch", "(in");
         }
 
         private static decimal ExtractExtraInch(string headerText)
@@ -1276,7 +1512,10 @@ namespace CostAnalysis.App.Services
             public int TotalWidthColumn { get; set; }
             public decimal TotalLengthExtraInch { get; set; }
             public decimal TotalWidthExtraInch { get; set; }
+            public bool TotalLengthInInch { get; set; }
+            public bool TotalWidthInInch { get; set; }
             public int BasePriceColumn { get; set; }
+            public int FormulaColumn { get; set; }
             public int CartonUnitPriceColumn { get; set; }
             public int MaterialTypeColumn { get; set; }
             public int BrandColumn { get; set; }

@@ -216,6 +216,8 @@ namespace CostAnalysis.App.UI
             AddSecondaryButton(toolbar, "打开", OnOpenAnalysis);
             AddSecondaryButton(toolbar, "导出 Excel", OnExportExcelPlaceholder);
 
+            AddSecondaryButton(toolbar, "MOQ模拟", OnOpenMoqSimulation);
+
             return workspace;
         }
 
@@ -495,6 +497,7 @@ namespace CostAnalysis.App.UI
             menu.Items.Add("AI补全成本", null, OnAiCompleteCosts);
             menu.Items.Add("-");
             menu.Items.Add("删除明细", null, OnDeleteSelectedRows);
+            menu.Items.Add("MOQ模拟", null, OnOpenMoqSimulation);
             return menu;
         }
 
@@ -522,6 +525,71 @@ namespace CostAnalysis.App.UI
                 row.Cells["ValidationStatus"].Value = "阶梯价已更新";
                 _statusLabel.Text = "已更新当前行阶梯价格，并按总用量重新匹配采购单价。";
             }
+        }
+
+        private void OnOpenMoqSimulation(object sender, EventArgs e)
+        {
+            RecalculateRows();
+
+            var lines = BuildMoqSimulationLines();
+            if (lines.Count == 0)
+            {
+                MessageBox.Show(this, "没有可模拟的明细。请先导入报价单、填写总用量，并保留至少一条阶梯价。", "MOQ模拟", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var results = new MoqSimulationService().Simulate(lines);
+            if (results.Count == 0)
+            {
+                MessageBox.Show(this, "当前阶梯价没有产生可比较的临界数量。可以先检查“编辑阶梯价”里是否填写了最小数量和单价。", "MOQ模拟", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var form = new MoqSimulationForm(results))
+            {
+                form.ShowDialog(this);
+            }
+
+            var best = results[0];
+            _statusLabel.Text = best.SavingAmount > 0
+                ? "MOQ模拟完成：最佳建议数量 " + best.TargetQuantity.ToString("0.####") + "，预计节省 " + best.SavingAmount.ToString("0.####") + "。"
+                : "MOQ模拟完成：当前没有发现整单总成本更低的起订量。";
+        }
+
+        private List<MoqSimulationLine> BuildMoqSimulationLines()
+        {
+            var lines = new List<MoqSimulationLine>();
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row.IsNewRow)
+                {
+                    continue;
+                }
+
+                var tiers = row.Tag as List<PriceTier>;
+                if (tiers == null || tiers.Count == 0)
+                {
+                    continue;
+                }
+
+                var quantity = ReadDecimal(row.Cells["TotalQuantity"].Value);
+                if (!quantity.HasValue || quantity.Value <= 0)
+                {
+                    continue;
+                }
+
+                lines.Add(new MoqSimulationLine
+                {
+                    No = row.Index + 1,
+                    MaterialCode = Convert.ToString(row.Cells["MaterialCode"].Value),
+                    MaterialName = Convert.ToString(row.Cells["MaterialName"].Value),
+                    CurrentQuantity = quantity,
+                    CurrentUnitPrice = ReadDecimal(row.Cells["PurchaseUnitPrice"].Value),
+                    PriceTiers = ClonePriceTiers(tiers)
+                });
+            }
+
+            return lines;
         }
 
         private void OnOpenCostHistoryReference(object sender, EventArgs e)

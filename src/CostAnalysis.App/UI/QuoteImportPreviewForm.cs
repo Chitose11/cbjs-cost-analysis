@@ -22,6 +22,7 @@ namespace CostAnalysis.App.UI
         private readonly Button _undoAiButton;
         private readonly Button _aiResultButton;
         private readonly Button _pasteTextButton;
+        private readonly PriceWarningService _priceWarningService;
         private string _lastAiRawContent;
         private PreviewSnapshot _lastPreviewSnapshot;
         private static readonly string[] AiWritableColumns =
@@ -40,6 +41,7 @@ namespace CostAnalysis.App.UI
         {
             _preview = preview;
             SelectedItems = new List<QuoteImportItem>();
+            _priceWarningService = new PriceWarningService();
 
             Text = "报价单导入确认";
             StartPosition = FormStartPosition.CenterParent;
@@ -156,6 +158,7 @@ namespace CostAnalysis.App.UI
             AddColumn(grid, "GramWeight", "克重");
             AddColumn(grid, "UsageQuantity", "用量");
             AddColumn(grid, "PriceTiers", "阶梯价格", true);
+            AddColumn(grid, "PriceWarning", "价格预警", true);
             AddColumn(grid, "AiStatus", "AI状态", true);
             return grid;
         }
@@ -309,7 +312,7 @@ namespace CostAnalysis.App.UI
             }
         }
 
-        private static void FillRow(DataGridViewRow row, QuoteImportItem item)
+        private void FillRow(DataGridViewRow row, QuoteImportItem item)
         {
             row.Cells["MaterialCode"].Value = item.MaterialCode;
             row.Cells["MaterialName"].Value = item.MaterialName;
@@ -319,6 +322,33 @@ namespace CostAnalysis.App.UI
             row.Cells["GramWeight"].Value = item.GramWeight;
             row.Cells["UsageQuantity"].Value = item.UsageQuantity.HasValue ? item.UsageQuantity.Value.ToString("0.####") : string.Empty;
             row.Cells["PriceTiers"].Value = FormatTiers(item);
+            ApplyPriceWarning(row, item);
+        }
+
+        private void ApplyPriceWarning(DataGridViewRow row, QuoteImportItem item)
+        {
+            if (!_grid.Columns.Contains("PriceWarning"))
+            {
+                return;
+            }
+
+            var result = _priceWarningService.EvaluateQuoteItem(_preview.Supplier, item);
+            var cell = row.Cells["PriceWarning"];
+            cell.Value = result.Message;
+            cell.ToolTipText = result.Message;
+            cell.Style.ForeColor = Color.FromArgb(85, 85, 90);
+            cell.Style.BackColor = Color.FromArgb(248, 248, 250);
+
+            if (result.Severity == PriceWarningSeverity.Yellow)
+            {
+                cell.Style.BackColor = Color.FromArgb(255, 247, 230);
+                cell.Style.ForeColor = Color.FromArgb(135, 88, 0);
+            }
+            else if (result.Severity == PriceWarningSeverity.Red)
+            {
+                cell.Style.BackColor = Color.FromArgb(255, 241, 240);
+                cell.Style.ForeColor = Color.FromArgb(170, 0, 0);
+            }
         }
 
         private void Confirm()
@@ -438,6 +468,7 @@ namespace CostAnalysis.App.UI
                 row.Cells["PriceTiers"].Value = FormatTiers(item);
                 row.Cells["PriceTiers"].Style.BackColor = Color.FromArgb(232, 244, 255);
                 row.Cells["PriceTiers"].ToolTipText = "阶梯价格已人工修正";
+                ApplyPriceWarning(row, item);
             }
         }
 
