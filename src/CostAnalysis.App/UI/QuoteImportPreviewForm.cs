@@ -22,6 +22,7 @@ namespace CostAnalysis.App.UI
         private readonly Button _undoAiButton;
         private readonly Button _aiResultButton;
         private readonly Button _pasteTextButton;
+        private readonly Button _warningSummaryButton;
         private readonly PriceWarningService _priceWarningService;
         private string _lastAiRawContent;
         private PreviewSnapshot _lastPreviewSnapshot;
@@ -95,6 +96,10 @@ namespace CostAnalysis.App.UI
             buttons.Controls.Add(_pasteTextButton);
 
             _aiPreviewButton = new Button { Text = "AI请求预览", Width = 108, Height = 32 };
+            _warningSummaryButton = new Button { Text = "预警汇总", Width = 92, Height = 32 };
+            _warningSummaryButton.Click += OnShowWarningSummary;
+            buttons.Controls.Add(_warningSummaryButton);
+
             _aiPreviewButton.Click += OnAiRequestPreview;
             buttons.Controls.Add(_aiPreviewButton);
 
@@ -351,6 +356,60 @@ namespace CostAnalysis.App.UI
             }
         }
 
+        private void OnShowWarningSummary(object sender, EventArgs e)
+        {
+            var red = 0;
+            var yellow = 0;
+            var lines = new List<string>();
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                var item = row.Tag as QuoteImportItem;
+                if (item == null)
+                {
+                    continue;
+                }
+
+                var result = _priceWarningService.EvaluateQuoteItem(_preview.Supplier, item);
+                if (result.Severity == PriceWarningSeverity.None)
+                {
+                    continue;
+                }
+
+                if (result.Severity == PriceWarningSeverity.Red)
+                {
+                    red++;
+                }
+                else if (result.Severity == PriceWarningSeverity.Yellow)
+                {
+                    yellow++;
+                }
+
+                lines.Add((row.Index + 1) + ". " + SafeText(item.MaterialCode, item.MaterialName, item.RawName) + "：" + result.Message);
+            }
+
+            if (lines.Count == 0)
+            {
+                MessageBox.Show(this, "当前导入明细没有发现价格预警。", "预警汇总", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var message = "红色预警：" + red + " 条；黄色预警：" + yellow + " 条\r\n\r\n" + string.Join("\r\n", lines.ToArray());
+            MessageBox.Show(this, message, "预警汇总", MessageBoxButtons.OK, red > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+        }
+
+        private static string SafeText(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value.Trim();
+                }
+            }
+
+            return "未命名物料";
+        }
+
         private void Confirm()
         {
             _grid.EndEdit();
@@ -543,6 +602,7 @@ namespace CostAnalysis.App.UI
             _aiAssistButton.Enabled = !busy;
             _aiPreviewButton.Enabled = !busy;
             _pasteTextButton.Enabled = !busy;
+            _warningSummaryButton.Enabled = !busy;
             _editPriceTiersButton.Enabled = !busy;
             _undoAiButton.Enabled = !busy && HasAiChanges();
             _aiResultButton.Enabled = !busy && !string.IsNullOrWhiteSpace(_lastAiRawContent);

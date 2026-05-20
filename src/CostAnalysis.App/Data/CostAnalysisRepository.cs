@@ -171,6 +171,64 @@ LIMIT @limit;", connection))
             return list;
         }
 
+        public List<CostHistoryItem> GetRecentCostHistory(int limit)
+        {
+            var list = new List<CostHistoryItem>();
+            using (var connection = new SQLiteConnection(DatabaseInitializer.ConnectionString))
+            {
+                connection.Open();
+                using (var command = new SQLiteCommand(@"
+SELECT ca.id AS analysis_id, ca.analysis_no, ca.customer_name, ca.project_name, ca.analysis_date, ca.created_at,
+       i.row_no, i.material_code, i.material_name, i.material_description, i.supplier, i.base_material_name,
+       i.material_vendor, i.material_unit_price, i.gram_weight, i.expanded_size, i.material_cost,
+       i.printing_cost, i.post_process_cost, i.other_cost, i.purchase_unit_price,
+       i.total_quantity, i.total_price, i.price_tiers_json
+FROM cost_analysis_items i
+INNER JOIN cost_analysis ca ON ca.id = i.cost_analysis_id
+WHERE i.purchase_unit_price IS NOT NULL AND i.purchase_unit_price > 0
+ORDER BY ca.id DESC, i.row_no
+LIMIT @limit;", connection))
+                {
+                    command.Parameters.AddWithValue("@limit", limit <= 0 ? 200 : limit);
+                    using (var reader = command.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            list.Add(new CostHistoryItem
+                            {
+                                AnalysisId = ReadInt(reader, "analysis_id"),
+                                AnalysisNo = ReadString(reader, "analysis_no"),
+                                CustomerName = ReadString(reader, "customer_name"),
+                                ProjectName = ReadString(reader, "project_name"),
+                                AnalysisDate = ReadString(reader, "analysis_date"),
+                                CreatedAt = ReadString(reader, "created_at"),
+                                No = ReadInt(reader, "row_no"),
+                                MaterialCode = ReadString(reader, "material_code"),
+                                MaterialName = ReadString(reader, "material_name"),
+                                MaterialDescription = ReadString(reader, "material_description"),
+                                Supplier = ReadString(reader, "supplier"),
+                                BaseMaterialName = ReadString(reader, "base_material_name"),
+                                MaterialVendor = ReadString(reader, "material_vendor"),
+                                MaterialUnitPrice = ReadDecimal(reader, "material_unit_price"),
+                                GramWeight = ReadString(reader, "gram_weight"),
+                                ExpandedSize = ReadString(reader, "expanded_size"),
+                                MaterialCost = ReadDecimal(reader, "material_cost"),
+                                PrintingCost = ReadDecimal(reader, "printing_cost"),
+                                PostProcessCost = ReadDecimal(reader, "post_process_cost"),
+                                OtherCost = ReadDecimal(reader, "other_cost"),
+                                PurchaseUnitPrice = ReadDecimal(reader, "purchase_unit_price"),
+                                TotalQuantity = ReadDecimal(reader, "total_quantity"),
+                                TotalPrice = ReadDecimal(reader, "total_price"),
+                                PriceTiers = DeserializePriceTiers(ReadString(reader, "price_tiers_json"))
+                            });
+                        }
+                    }
+                }
+            }
+
+            return list;
+        }
+
         private List<SavedCostAnalysisItem> GetItems(int analysisId)
         {
             var list = new List<SavedCostAnalysisItem>();

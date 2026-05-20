@@ -4,6 +4,7 @@ using System.Drawing;
 using System.IO;
 using System.Threading;
 using System.Windows.Forms;
+using CostAnalysis.App.Data;
 using CostAnalysis.App.Services;
 
 namespace CostAnalysis.App.UI
@@ -14,6 +15,7 @@ namespace CostAnalysis.App.UI
         private readonly Button _browseButton;
         private readonly Button _scanButton;
         private readonly Button _cancelScanButton;
+        private readonly Button _aiCleanButton;
         private readonly Button _importButton;
         private readonly DataGridView _grid;
         private readonly Label _statusLabel;
@@ -104,6 +106,10 @@ namespace CostAnalysis.App.UI
             var closeButton = new Button { Text = "关闭", Width = 82, Height = 32 };
             closeButton.Click += (_, __) => DialogResult = DialogResult.Cancel;
             buttons.Controls.Add(closeButton);
+
+            _aiCleanButton = new Button { Text = "AI清洗未知", Width = 108, Height = 32 };
+            _aiCleanButton.Click += OnAiCleanUnknown;
+            buttons.Controls.Add(_aiCleanButton);
 
             FormClosing += (_, __) => _cancelRequested = true;
         }
@@ -275,6 +281,15 @@ namespace CostAnalysis.App.UI
             row.Cells["SheetName"].Value = preview.SheetName;
             row.Cells["ItemCount"].Value = preview.Items == null ? 0 : preview.Items.Count;
             row.Cells["Error"].Value = string.Empty;
+            new QuoteTemplateRepository().SaveLearnedTemplate(
+                result.Preview,
+                Convert.ToString(row.Cells["FileName"].Value),
+                result.Preview.Items == null ? 0 : result.Preview.Items.Count);
+            if (string.IsNullOrWhiteSpace(Convert.ToString(row.Cells["Error"].Value)))
+            {
+                row.Cells["Error"].Value = "已学习为本地模板参考";
+            }
+
             row.DefaultCellStyle.BackColor = Color.FromArgb(238, 247, 255);
         }
 
@@ -289,6 +304,244 @@ namespace CostAnalysis.App.UI
             row.Cells["Status"].Value = "未识别";
             row.Cells["Error"].Value = message;
             row.DefaultCellStyle.BackColor = Color.FromArgb(255, 249, 219);
+        }
+
+        private void OnAiCleanUnknown(object sender, EventArgs e)
+        {
+            var rows = GetAiCleanTargetRows();
+            if (rows.Count == 0)
+            {
+                MessageBox.Show(this, "没有可 AI 清洗的未知单据。请先批量预扫描，或选择未识别的行。", "AI清洗未知", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var settings = new AiSettingsRepository().Get();
+            if (!settings.IsEnabled || string.IsNullOrWhiteSpace(settings.ApiKey))
+            {
+                MessageBox.Show(this, "AI 功能尚未启用或未配置 DeepSeek API Key。请先到系统设置中启用 AI。", "AI清洗未知", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var confirm = MessageBox.Show(this, "将对 " + rows.Count + " 个未知单据调用 DeepSeek 批量清洗，结果仍需人工确认。继续吗？", "AI清洗未知", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirm != DialogResult.Yes)
+            {
+                return;
+            }
+
+            _cancelRequested = false;
+            SetScanningState(true);
+            var targets = BuildAiCleanTargets(rows);
+            _scanThread = new Thread(() => AiCleanRows(targets, settings));
+            _scanThread.IsBackground = true;
+            _scanThread.SetApartmentState(ApartmentState.STA);
+            _scanThread.Start();
+        }
+
+        private List<AiCleanTarget> BuildAiCleanTargets(List<int> rowIndexes)
+        {
+            var targets = new List<AiCleanTarget>();
+            foreach (var rowIndex in rowIndexes)
+            {
+                if (rowIndex < 0 || rowIndex >= _grid.Rows.Count)
+                {
+                    continue;
+                }
+
+                var row = _grid.Rows[rowIndex];
+                var result = row.Tag as BatchQuoteScanResult;
+                targets.Add(new AiCleanTarget
+                {
+                    RowIndex = rowIndex,
+                    FilePath = Convert.ToString(row.Cells["FilePath"].Value),
+                    FileName = Convert.ToString(row.Cells["FileName"].Value),
+                    Result = result
+                });
+            }
+
+            return targets;
+        }
+
+        private List<int> GetAiCleanTargetRows()
+        {
+            var result = new List<int>();
+            if (_grid.SelectedRows.Count > 0)
+            {
+                foreach (DataGridViewRow row in _grid.SelectedRows)
+                {
+                    if (!row.IsNewRow && IsUnknownRow(row))
+                    {
+                        result.Add(row.Index);
+                    }
+                }
+            }
+
+            if (result.Count > 0)
+            {
+                result.Sort();
+                return result;
+            }
+
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (!row.IsNewRow && IsUnknownRow(row))
+                {
+                    result.Add(row.Index);
+                }
+            }
+
+            return result;
+        }
+
+        private static bool IsUnknownRow(DataGridViewRow row)
+        {
+            var itemCountText = Convert.ToString(row.Cells["ItemCount"].Value);
+            int itemCount;
+            if (int.TryParse(itemCountText, out itemCount) && itemCount > 0)
+            {
+                return false;
+            }
+
+            return !string.IsNullOrWhiteSpace(Convert.ToString(row.Cells["FilePath"].Value));
+        }
+
+        private void AiCleanRows(List<AiCleanTarget> targets, AiSettings settings)
+        {
+            var client = new DeepSeekClient();
+            var success = 0;
+            var failure = 0;
+            for (var i = 0; i < targets.Count; i++)
+            {
+                if (_cancelRequested)
+                {
+                    break;
+                }
+
+                var target = targets[i];
+                var rowIndex = target.RowIndex;
+                var scanResult = target.Result;
+                RunOnUi(() =>
+                {
+                    if (rowIndex >= 0 && rowIndex < _grid.Rows.Count)
+                    {
+                        var row = _grid.Rows[rowIndex];
+                        row.Cells["Status"].Value = "AI清洗中";
+                        _statusLabel.Text = "AI 清洗 " + (i + 1) + "/" + targets.Count + "：" + target.FileName;
+                    }
+                });
+
+                try
+                {
+                    var preview = scanResult == null ? null : scanResult.Preview;
+                    if (preview == null)
+                    {
+                        preview = new ExcelQuoteImportService().Import(target.FilePath);
+                        scanResult = new BatchQuoteScanResult { Preview = preview };
+                    }
+
+                    var aiResult = client.RecognizeQuote(settings, preview);
+                    var added = ApplyAiResultToPreview(preview, aiResult);
+                    if (added <= 0)
+                    {
+                        throw new InvalidOperationException("AI 未返回可导入物料。");
+                    }
+
+                    success++;
+                    RunOnUi(() => ApplyAiCleanSuccess(rowIndex, scanResult, aiResult));
+                }
+                catch (Exception ex)
+                {
+                    failure++;
+                    var message = ex.Message;
+                    RunOnUi(() => ApplyAiCleanFailure(rowIndex, message));
+                }
+            }
+
+            RunOnUi(() =>
+            {
+                SetScanningState(false);
+                _statusLabel.Text = _cancelRequested
+                    ? "AI 清洗已停止。成功 " + success + " 个，失败 " + failure + " 个。"
+                    : "AI 清洗完成。成功 " + success + " 个，失败 " + failure + " 个。";
+            });
+        }
+
+        private void ApplyAiCleanSuccess(int rowIndex, BatchQuoteScanResult result, AiQuoteRecognitionResult aiResult)
+        {
+            if (rowIndex < 0 || rowIndex >= _grid.Rows.Count)
+            {
+                return;
+            }
+
+            var row = _grid.Rows[rowIndex];
+            row.Tag = result;
+            row.Cells["Status"].Value = "AI已清洗";
+            row.Cells["TemplateType"].Value = result.Preview.TemplateType;
+            row.Cells["Supplier"].Value = result.Preview.Supplier;
+            row.Cells["SheetName"].Value = result.Preview.SheetName;
+            row.Cells["ItemCount"].Value = result.Preview.Items == null ? 0 : result.Preview.Items.Count;
+            row.Cells["Error"].Value = aiResult == null || aiResult.Warnings == null ? string.Empty : string.Join("；", aiResult.Warnings.ToArray());
+            new QuoteTemplateRepository().SaveLearnedTemplate(
+                result.Preview,
+                Convert.ToString(row.Cells["FileName"].Value),
+                result.Preview.Items == null ? 0 : result.Preview.Items.Count);
+            if (string.IsNullOrWhiteSpace(Convert.ToString(row.Cells["Error"].Value)))
+            {
+                row.Cells["Error"].Value = "已学习为本地模板参考";
+            }
+
+            row.DefaultCellStyle.BackColor = Color.FromArgb(238, 247, 255);
+        }
+
+        private void ApplyAiCleanFailure(int rowIndex, string message)
+        {
+            if (rowIndex < 0 || rowIndex >= _grid.Rows.Count)
+            {
+                return;
+            }
+
+            var row = _grid.Rows[rowIndex];
+            row.Cells["Status"].Value = "AI失败";
+            row.Cells["Error"].Value = message;
+            row.DefaultCellStyle.BackColor = Color.FromArgb(255, 241, 240);
+        }
+
+        private static int ApplyAiResultToPreview(QuoteImportPreview preview, AiQuoteRecognitionResult result)
+        {
+            if (preview == null || result == null || result.Items == null)
+            {
+                return 0;
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.TemplateType)) preview.TemplateType = result.TemplateType;
+            if (!string.IsNullOrWhiteSpace(result.Supplier)) preview.Supplier = result.Supplier;
+            if (!string.IsNullOrWhiteSpace(result.QuoteDate)) preview.QuoteDate = result.QuoteDate;
+            if (!string.IsNullOrWhiteSpace(result.QuoteNo)) preview.QuoteNo = result.QuoteNo;
+            if (result.HeaderRow.HasValue) preview.HeaderRow = result.HeaderRow.Value;
+            if (result.QuantityRow.HasValue) preview.QuantityRow = result.QuantityRow.Value;
+            if (result.DataStartRow.HasValue) preview.DataStartRow = result.DataStartRow.Value;
+
+            preview.Items = new List<QuoteImportItem>();
+            foreach (var aiItem in result.Items)
+            {
+                if (aiItem == null)
+                {
+                    continue;
+                }
+
+                preview.Items.Add(new QuoteImportItem
+                {
+                    RawName = aiItem.RawName,
+                    MaterialCode = aiItem.MaterialCode,
+                    MaterialName = aiItem.MaterialName,
+                    FinishedSize = aiItem.FinishedSize,
+                    MaterialProcess = aiItem.MaterialProcess,
+                    MaterialNameExtracted = aiItem.MaterialNameExtracted,
+                    GramWeight = aiItem.GramWeight,
+                    PriceTiers = new List<PriceTier>()
+                });
+            }
+
+            return preview.Items.Count;
         }
 
         private void OnImportSelected(object sender, EventArgs e)
@@ -316,6 +569,7 @@ namespace CostAnalysis.App.UI
             _scanButton.Enabled = !scanning;
             _cancelScanButton.Enabled = scanning;
             _importButton.Enabled = !scanning;
+            _aiCleanButton.Enabled = !scanning;
             Cursor = scanning ? Cursors.WaitCursor : Cursors.Default;
         }
 
@@ -354,6 +608,14 @@ namespace CostAnalysis.App.UI
         private sealed class BatchQuoteScanResult
         {
             public QuoteImportPreview Preview { get; set; }
+        }
+
+        private sealed class AiCleanTarget
+        {
+            public int RowIndex { get; set; }
+            public string FilePath { get; set; }
+            public string FileName { get; set; }
+            public BatchQuoteScanResult Result { get; set; }
         }
     }
 }

@@ -94,7 +94,7 @@ namespace CostAnalysis.App.UI
                 BackColor = _panel
             };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 292));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 334));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
@@ -126,6 +126,7 @@ namespace CostAnalysis.App.UI
             AddMenuButton(menu, "材料库", OnOpenMaterials);
             AddMenuButton(menu, "工艺规则", OnOpenProcessRules);
             AddMenuButton(menu, "系统设置", OnOpenAiSettings);
+            AddMenuButton(menu, "OCR设置", OnOpenOcrSettings);
 
             layout.Controls.Add(new Label
             {
@@ -1123,6 +1124,14 @@ namespace CostAnalysis.App.UI
         private void OnOpenAiSettings(object sender, EventArgs e)
         {
             using (var form = new AiSettingsForm())
+            {
+                form.ShowDialog(this);
+            }
+        }
+
+        private void OnOpenOcrSettings(object sender, EventArgs e)
+        {
+            using (var form = new OcrSettingsForm())
             {
                 form.ShowDialog(this);
             }

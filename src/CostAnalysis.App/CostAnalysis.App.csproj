@@ -19,4 +19,10 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Include="System.Data.SQLite.Core" Version="1.0.119.0" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="tools\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

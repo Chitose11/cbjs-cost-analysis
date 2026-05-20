@@ -144,6 +144,16 @@ CREATE TABLE IF NOT EXISTS ai_settings (
     allow_supplier_name INTEGER DEFAULT 1,
     allow_price INTEGER DEFAULT 1
 );");
+
+                Execute(connection, @"
+CREATE TABLE IF NOT EXISTS ocr_tool_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    poppler_directory TEXT,
+    pdftotext_path TEXT,
+    pdftoppm_path TEXT,
+    tesseract_path TEXT,
+    tesseract_language TEXT
+);");
             }
         }
 

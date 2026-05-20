@@ -11,6 +11,7 @@ namespace CostAnalysis.App.Services
         private const decimal RedIncreaseRate = 0.10m;
         private const decimal YellowLowerSupplierRate = 0.03m;
         private const decimal RedLowerSupplierRate = 0.10m;
+        private const int RecentHistoryLimit = 300;
 
         public PriceWarningResult EvaluateQuoteItem(string supplier, QuoteImportItem item)
         {
@@ -27,7 +28,17 @@ namespace CostAnalysis.App.Services
                 materialName = item.RawName;
             }
 
-            var history = new CostAnalysisRepository().SearchCostHistory(materialCode, materialName, 80);
+            var repository = new CostAnalysisRepository();
+            var history = repository.SearchCostHistory(materialCode, materialName, 80);
+            var similarHistory = FindSimilarHistory(repository.GetRecentCostHistory(RecentHistoryLimit), item);
+            foreach (var similar in similarHistory)
+            {
+                if (!history.Any(existing => existing.AnalysisId == similar.AnalysisId && existing.No == similar.No))
+                {
+                    history.Add(similar);
+                }
+            }
+
             if (history.Count == 0)
             {
                 return PriceWarningResult.Empty;
@@ -59,9 +70,20 @@ namespace CostAnalysis.App.Services
                 }
             }
 
+            var similarLower = FindSimilarLowerHistory(similarHistory, supplier, currentPrice.Value);
+            if (similarLower != null && similarLower.PurchaseUnitPrice.HasValue)
+            {
+                var gapRate = (currentPrice.Value - similarLower.PurchaseUnitPrice.Value) / similarLower.PurchaseUnitPrice.Value;
+                if (gapRate >= YellowLowerSupplierRate)
+                {
+                    severity = Max(severity, gapRate >= RedLowerSupplierRate ? PriceWarningSeverity.Red : PriceWarningSeverity.Yellow);
+                    messages.Add("同类型规格历史更低：" + SafeSupplier(similarLower.Supplier) + " " + FormatPrice(similarLower.PurchaseUnitPrice.Value) + "，差 " + FormatPercent(gapRate));
+                }
+            }
+
             return messages.Count == 0
                 ? PriceWarningResult.Empty
-                : new PriceWarningResult(severity, string.Join("；", messages.ToArray()));
+                : new PriceWarningResult(severity, string.Join("；", messages.Distinct().ToArray()));
         }
 
         private static decimal? GetCurrentUnitPrice(QuoteImportItem item)
@@ -106,6 +128,115 @@ namespace CostAnalysis.App.Services
                                Normalize(item.Supplier) != normalizedSupplier)
                 .OrderBy(item => item.PurchaseUnitPrice.Value)
                 .FirstOrDefault();
+        }
+
+        private static CostHistoryItem FindSimilarLowerHistory(List<CostHistoryItem> history, string supplier, decimal currentPrice)
+        {
+            var normalizedSupplier = Normalize(supplier);
+            return (history ?? new List<CostHistoryItem>())
+                .Where(item => item.PurchaseUnitPrice.HasValue &&
+                               item.PurchaseUnitPrice.Value > 0 &&
+                               item.PurchaseUnitPrice.Value < currentPrice &&
+                               Normalize(item.Supplier) != normalizedSupplier)
+                .OrderBy(item => item.PurchaseUnitPrice.Value)
+                .FirstOrDefault();
+        }
+
+        private static List<CostHistoryItem> FindSimilarHistory(List<CostHistoryItem> history, QuoteImportItem item)
+        {
+            var result = new List<CostHistoryItem>();
+            if (item == null || history == null || history.Count == 0)
+            {
+                return result;
+            }
+
+            foreach (var candidate in history)
+            {
+                if (IsSimilarItem(candidate, item))
+                {
+                    result.Add(candidate);
+                }
+            }
+
+            return result.Take(80).ToList();
+        }
+
+        private static bool IsSimilarItem(CostHistoryItem history, QuoteImportItem item)
+        {
+            var score = 0;
+            var currentName = NormalizeText(item.MaterialName + " " + item.RawName);
+            var historyName = NormalizeText(history.MaterialName + " " + history.MaterialDescription);
+            if (!string.IsNullOrWhiteSpace(currentName) &&
+                !string.IsNullOrWhiteSpace(historyName) &&
+                HasSharedKeyword(currentName, historyName))
+            {
+                score += 2;
+            }
+
+            var currentSize = NormalizeSize(item.FinishedSize);
+            var historySize = NormalizeSize(history.ExpandedSize);
+            if (!string.IsNullOrWhiteSpace(currentSize) && currentSize == historySize)
+            {
+                score += 3;
+            }
+
+            if (SameNormalized(item.MaterialNameExtracted, history.BaseMaterialName))
+            {
+                score += 2;
+            }
+
+            if (SameNormalized(item.GramWeight, history.GramWeight))
+            {
+                score += 1;
+            }
+
+            return score >= 3;
+        }
+
+        private static bool HasSharedKeyword(string left, string right)
+        {
+            foreach (var token in SplitTokens(left))
+            {
+                if (token.Length >= 2 && right.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<string> SplitTokens(string value)
+        {
+            return (value ?? string.Empty)
+                .Split(new[] { ' ', '；', ';', ',', '，', '/', '\\', '-', '_', '(', ')', '（', '）' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(token => token.Trim())
+                .Where(token => token.Length >= 2);
+        }
+
+        private static bool SameNormalized(string left, string right)
+        {
+            var normalizedLeft = NormalizeText(left);
+            var normalizedRight = NormalizeText(right);
+            return !string.IsNullOrWhiteSpace(normalizedLeft) && normalizedLeft == normalizedRight;
+        }
+
+        private static string NormalizeSize(string value)
+        {
+            return NormalizeText(value)
+                .Replace("毫米", "mm")
+                .Replace("ｍｍ", "mm")
+                .Replace("×", "*")
+                .Replace("x", "*");
+        }
+
+        private static string NormalizeText(string value)
+        {
+            return (value ?? string.Empty)
+                .Replace(" ", string.Empty)
+                .Replace("\t", string.Empty)
+                .Trim()
+                .ToLowerInvariant();
         }
 
         private static DateTime ParseDate(string analysisDate, string createdAt)

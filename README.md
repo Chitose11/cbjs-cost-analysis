@@ -198,7 +198,7 @@ tmp/
 
 - 报价单读取当前依赖 Excel COM。
 - 复杂纸箱核价公式还没有完整支持。
-- PDF 自动解析和图片 OCR 暂未进入 MVP。
+- PDF 自动解析和图片 OCR 已提供轻量入口；图片型 PDF 需要配置 Poppler/Tesseract，或提供同名 `.txt` 旁路文本。
 - AI 只做辅助识别建议，不替用户最终确认成本。
 - WinForms UI 已做轻量化优化，但仍是第一版 MVP，后续可继续按 Ant Design Table 的交互体验优化。
 
@@ -222,6 +222,7 @@ tmp/
 - Excel 导出：`src/CostAnalysis.App/Services/ExcelExportService.cs`
 - AI 调用：`src/CostAnalysis.App/Services/DeepSeekClient.cs`
 - AI 设置：`src/CostAnalysis.App/Data/AiSettingsRepository.cs`
+- PDF/OCR 工具设置：`src/CostAnalysis.App/Data/OcrToolSettingsRepository.cs`
 - 材料库：`src/CostAnalysis.App/Data/MaterialRepository.cs`
 
 详细 MVP 计划见：

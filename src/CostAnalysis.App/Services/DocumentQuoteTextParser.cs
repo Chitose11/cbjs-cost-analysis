@@ -10,13 +10,13 @@ namespace CostAnalysis.App.Services
             new Regex(@"(?<code>(?:\d+-)?\d{2}\.\d{2}\.[A-Za-z0-9xX]{4,}(?:[-.][A-Za-z0-9]+)*)", RegexOptions.Compiled);
 
         private static readonly Regex SizeRegex =
-            new Regex(@"(?<size>\d+(?:\.\d+)?\s*[*xX×]\s*\d+(?:\.\d+)?(?:\s*[*xX×]\s*\d+(?:\.\d+)?)?\s*(?:mm|MM|毫米)?)", RegexOptions.Compiled);
+            new Regex(@"(?<size>\d+(?:\.\d+)?\s*[*xX×]\s*\d+(?:\.\d+)?(?:\s*[*xX×]\s*\d+(?:\.\d+)?)?\s*(?:mm|MM|毫米|CM|cm)?)", RegexOptions.Compiled);
 
         private static readonly Regex GramWeightRegex =
-            new Regex(@"(?<weight>\d+(?:\.\d+)?\s*(?:g|G|克|#))", RegexOptions.Compiled);
+            new Regex(@"(?<weight>\d+(?:\.\d+)?\s*(?:g|G|克|gsm|GSM|#))", RegexOptions.Compiled);
 
         private static readonly Regex PriceTierRegex =
-            new Regex(@"(?<label>\d{2,6}\s*(?:-|~|—|至)\s*\d{2,6}|\d{2,6}\s*\+)\D{0,12}(?<price>\d+(?:\.\d+)?)", RegexOptions.Compiled);
+            new Regex(@"(?<![.\d])(?<label>\d{2,6}\s*(?:[-~至到]\s*\d{2,6}|\+|以上))\s*(?:=|:|：)?\s*(?<price>\d+(?:\.\d+)?)", RegexOptions.Compiled);
 
         public static List<QuoteImportItem> Parse(List<string> lines)
         {
@@ -53,20 +53,16 @@ namespace CostAnalysis.App.Services
             }
 
             var code = codeMatch.Success ? codeMatch.Groups["code"].Value.Trim() : string.Empty;
-            var name = ExtractName(line, code, tiers.Count > 0 ? tiers[0].Label : string.Empty);
             var process = ExtractProcess(line);
-            var size = ExtractFirst(SizeRegex, line, "size");
-            var gramWeight = JoinUnique(GramWeightRegex, line, "weight");
-
             return new QuoteImportItem
             {
                 RawName = line,
                 MaterialCode = code,
-                MaterialName = name,
-                FinishedSize = size,
+                MaterialName = ExtractName(line, code, tiers.Count > 0 ? tiers[0].Label : string.Empty),
+                FinishedSize = ExtractFirst(SizeRegex, line, "size"),
                 MaterialProcess = process,
                 MaterialNameExtracted = ExtractMaterialName(process),
-                GramWeight = gramWeight,
+                GramWeight = JoinUnique(GramWeightRegex, line, "weight"),
                 PriceTiers = tiers
             };
         }
@@ -77,8 +73,13 @@ namespace CostAnalysis.App.Services
             var current = string.Empty;
             foreach (var line in lines)
             {
-                var trimmed = line.Trim();
-                if (MaterialCodeRegex.IsMatch(trimmed) || string.IsNullOrWhiteSpace(current))
+                var trimmed = (line ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(trimmed))
+                {
+                    continue;
+                }
+
+                if (MaterialCodeRegex.IsMatch(trimmed) || (LooksLikeBusinessLine(trimmed) && string.IsNullOrWhiteSpace(current)))
                 {
                     if (!string.IsNullOrWhiteSpace(current))
                     {
@@ -87,7 +88,7 @@ namespace CostAnalysis.App.Services
 
                     current = trimmed;
                 }
-                else if (LooksLikeContinuation(trimmed))
+                else if (!string.IsNullOrWhiteSpace(current) && LooksLikeContinuation(trimmed))
                 {
                     current += " " + trimmed;
                 }
@@ -106,7 +107,7 @@ namespace CostAnalysis.App.Services
             return SizeRegex.IsMatch(line) ||
                    GramWeightRegex.IsMatch(line) ||
                    PriceTierRegex.IsMatch(line) ||
-                   ContainsAny(line, "材质", "工艺", "尺寸", "规格", "单价", "报价", "用量");
+                   ContainsAny(line, "材质", "工艺", "尺寸", "规格", "单价", "报价", "用量", "价格", "含税");
         }
 
         private static bool LooksLikeBusinessLine(string line)
@@ -118,18 +119,19 @@ namespace CostAnalysis.App.Services
 
             if (line.StartsWith("D:", StringComparison.OrdinalIgnoreCase) ||
                 line.IndexOf("KONICA MINOLTA", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                line.IndexOf("bizhub", StringComparison.OrdinalIgnoreCase) >= 0)
+                line.IndexOf("bizhub", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                line.IndexOf("Adobe", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 return false;
             }
 
-            return ContainsAny(line, "材质", "工艺", "尺寸", "规格", "单价", "报价", "用量", "物料", "纸", "盒", "箱", "卡", "胶", "膜") ||
+            return ContainsAny(line, "材质", "工艺", "尺寸", "规格", "单价", "报价", "用量", "价格", "物料", "纸", "盒", "箱", "卡", "膜", "胶", "印刷") ||
                    MaterialCodeRegex.IsMatch(line);
         }
 
         private static string ExtractName(string line, string code, string firstTierLabel)
         {
-            var value = line;
+            var value = line ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(code))
             {
                 value = value.Replace(code, " ");
@@ -144,16 +146,16 @@ namespace CostAnalysis.App.Services
                 }
             }
 
-            value = Regex.Replace(value, @"尺寸[:：]?\s*\d+(?:\.\d+)?\s*[*xX×]\s*\d+(?:\.\d+)?(?:\s*[*xX×]\s*\d+(?:\.\d+)?)?\s*(?:mm|MM|毫米)?", " ");
-            value = Regex.Replace(value, @"材质[/／]工艺[:：]?", " ");
+            value = Regex.Replace(value, @"(?:尺寸|规格|成品尺寸)[:：]?\s*\d+(?:\.\d+)?\s*[*xX×]\s*\d+(?:\.\d+)?(?:\s*[*xX×]\s*\d+(?:\.\d+)?)?\s*(?:mm|MM|毫米|CM|cm)?", " ");
+            value = Regex.Replace(value, @"(?:材质/工艺|材质|工艺|规格描述)[:：]?", " ");
             value = Regex.Replace(value, @"\s+", " ").Trim(' ', '-', '_', '/', '\\', '，', ',', '；', ';', '：', ':');
             return value.Length > 80 ? value.Substring(0, 80) : value;
         }
 
         private static string ExtractProcess(string line)
         {
-            var value = line;
-            var processIndex = IndexOfAny(value, "材质/工艺", "材质", "工艺", "规格描述");
+            var value = line ?? string.Empty;
+            var processIndex = IndexOfAny(value, "材质/工艺", "材质", "工艺", "规格描述", "规格");
             if (processIndex >= 0)
             {
                 value = value.Substring(processIndex);
@@ -168,7 +170,7 @@ namespace CostAnalysis.App.Services
             foreach (Match match in PriceTierRegex.Matches(line ?? string.Empty))
             {
                 decimal price;
-                if (!decimal.TryParse(match.Groups["price"].Value, out price))
+                if (!decimal.TryParse(match.Groups["price"].Value, out price) || price <= 0)
                 {
                     continue;
                 }
@@ -177,6 +179,11 @@ namespace CostAnalysis.App.Services
                 int? min;
                 int? max;
                 ParseTierLabel(label, out min, out max);
+                if (!min.HasValue && label.Length < 2)
+                {
+                    continue;
+                }
+
                 tiers.Add(new PriceTier
                 {
                     Label = label,
@@ -193,7 +200,12 @@ namespace CostAnalysis.App.Services
         {
             min = null;
             max = null;
-            var normalized = (label ?? string.Empty).Replace("—", "-").Replace("~", "-").Replace("至", "-");
+            var normalized = (label ?? string.Empty)
+                .Replace("~", "-")
+                .Replace("至", "-")
+                .Replace("到", "-")
+                .Replace("以上", "+");
+
             if (normalized.EndsWith("+", StringComparison.OrdinalIgnoreCase))
             {
                 int parsed;

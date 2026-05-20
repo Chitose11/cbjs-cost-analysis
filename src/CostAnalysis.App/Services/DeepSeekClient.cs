@@ -324,6 +324,12 @@ namespace CostAnalysis.App.Services
             sb.AppendLine("如果不能确定，请保留原值并设置 requires_review=true 或在 warnings 中说明。");
             sb.AppendLine();
             sb.AppendLine(AiPromptTemplates.QuoteRecognitionSchemaInstruction);
+            var templateHint = new QuoteTemplateRepository().BuildAiTemplateHint(preview);
+            if (!string.IsNullOrWhiteSpace(templateHint))
+            {
+                sb.AppendLine();
+                sb.AppendLine(templateHint);
+            }
             sb.AppendLine();
             sb.AppendLine("报价单基本信息：");
             sb.AppendLine("供应商：" + (settings.AllowSupplierName ? Safe(preview.Supplier) : "[已按设置隐藏]"));
