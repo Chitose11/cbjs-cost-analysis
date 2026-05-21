@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -61,7 +61,7 @@ namespace CostAnalysis.App.Services
             {
                 SheetName = sheetName,
                 Supplier = GetString(map, "supplier"),
-                TemplateType = "鏈湴瀛︿範妯℃澘-" + (template.Name ?? string.Empty),
+                TemplateType = "本地学习模板-" + (template.Name ?? string.Empty),
                 Confidence = 0.75,
                 HeaderRow = GetInt(map, "header_row"),
                 QuantityRow = GetInt(map, "quantity_row"),
