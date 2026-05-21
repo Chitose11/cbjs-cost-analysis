@@ -6,3 +6,7 @@ obj/
 *.db-shm
 *.db-wal
 tmp/
+!src/CostAnalysis.App/tools/
+!src/CostAnalysis.App/tools/**
+!src/CostAnalysis.App/tools/poppler/bin/
+!src/CostAnalysis.App/tools/poppler/bin/**

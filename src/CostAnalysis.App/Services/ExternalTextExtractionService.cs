@@ -30,20 +30,29 @@ namespace CostAnalysis.App.Services
                 return lines;
             }
 
-            lines = FilterReadableLines(SplitLines(RunTool("pdftotext", "-layout -nopgbrk -enc UTF-8 " + Quote(filePath) + " -", 20000)));
-            if (LooksUseful(lines))
+            var tempInput = CopyToAsciiTemp(filePath);
+            try
             {
-                return lines;
-            }
+                var toolInput = string.IsNullOrWhiteSpace(tempInput) ? filePath : tempInput;
+                lines = FilterReadableLines(SplitLines(RunTool("pdftotext", "-layout -nopgbrk -enc UTF-8 " + Quote(toolInput) + " -", 20000)));
+                if (LooksUseful(lines))
+                {
+                    return lines;
+                }
 
-            lines = FilterReadableLines(SplitLines(RunTool("pdftotext", "-raw -nopgbrk -enc UTF-8 " + Quote(filePath) + " -", 20000)));
-            if (LooksUseful(lines))
+                lines = FilterReadableLines(SplitLines(RunTool("pdftotext", "-raw -nopgbrk -enc UTF-8 " + Quote(toolInput) + " -", 20000)));
+                if (LooksUseful(lines))
+                {
+                    return lines;
+                }
+
+                lines = TryOcrPdfPages(toolInput);
+                return LooksUseful(lines) ? lines : new List<string>();
+            }
+            finally
             {
-                return lines;
+                TryDeleteFile(tempInput);
             }
-
-            lines = TryOcrPdfPages(filePath);
-            return LooksUseful(lines) ? lines : new List<string>();
         }
 
         public List<string> ExtractImageTextLines(string filePath)
@@ -54,14 +63,23 @@ namespace CostAnalysis.App.Services
                 return lines;
             }
 
-            var language = string.IsNullOrWhiteSpace(_settings.TesseractLanguage) ? "chi_sim+eng" : _settings.TesseractLanguage.Trim();
-            lines = FilterReadableLines(SplitLines(RunTool("tesseract", Quote(filePath) + " stdout -l " + language + " --psm 6", 30000)));
-            if (LooksUseful(lines))
+            var tempInput = CopyToAsciiTemp(filePath);
+            try
             {
-                return lines;
-            }
+                var toolInput = string.IsNullOrWhiteSpace(tempInput) ? filePath : tempInput;
+                var language = string.IsNullOrWhiteSpace(_settings.TesseractLanguage) ? "chi_sim+eng" : _settings.TesseractLanguage.Trim();
+                lines = FilterReadableLines(SplitLines(RunTool("tesseract", Quote(toolInput) + " stdout -l " + language + " --psm 6", 30000)));
+                if (LooksUseful(lines))
+                {
+                    return lines;
+                }
 
-            return FilterReadableLines(SplitLines(RunTool("tesseract", Quote(filePath) + " stdout -l eng --psm 6", 30000)));
+                return FilterReadableLines(SplitLines(RunTool("tesseract", Quote(toolInput) + " stdout -l eng --psm 6", 30000)));
+            }
+            finally
+            {
+                TryDeleteFile(tempInput);
+            }
         }
 
         public string GetToolStatusText()
@@ -125,9 +143,19 @@ namespace CostAnalysis.App.Services
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true,
+                    WorkingDirectory = Path.GetDirectoryName(toolPath) ?? string.Empty,
                     StandardOutputEncoding = Encoding.UTF8,
                     StandardErrorEncoding = Encoding.UTF8
                 };
+
+                if (toolName == "tesseract")
+                {
+                    var tessdata = ResolveTessdataDirectory(toolPath);
+                    if (!string.IsNullOrWhiteSpace(tessdata))
+                    {
+                        startInfo.EnvironmentVariables["TESSDATA_PREFIX"] = tessdata;
+                    }
+                }
 
                 using (var process = Process.Start(startInfo))
                 {
@@ -206,6 +234,43 @@ namespace CostAnalysis.App.Services
             }
 
             return string.Empty;
+        }
+
+        private static string ResolveTessdataDirectory(string tesseractPath)
+        {
+            var directory = Path.GetDirectoryName(tesseractPath);
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                return string.Empty;
+            }
+
+            var tessdata = Path.Combine(directory, "tessdata");
+            return Directory.Exists(tessdata) ? tessdata : string.Empty;
+        }
+
+        private static string CopyToAsciiTemp(string filePath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+                {
+                    return string.Empty;
+                }
+
+                var extension = Path.GetExtension(filePath);
+                if (string.IsNullOrWhiteSpace(extension))
+                {
+                    extension = ".tmp";
+                }
+
+                var tempPath = Path.Combine(Path.GetTempPath(), "cbjs_ocr_input_" + Guid.NewGuid().ToString("N") + extension);
+                File.Copy(filePath, tempPath, true);
+                return tempPath;
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private static IEnumerable<string> GetBundledToolRoots(string toolName)
@@ -480,6 +545,21 @@ namespace CostAnalysis.App.Services
                 if (Directory.Exists(path))
                 {
                     Directory.Delete(path, true);
+                }
+            }
+            catch
+            {
+                // Ignore temporary OCR cleanup errors.
+            }
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                {
+                    File.Delete(path);
                 }
             }
             catch
