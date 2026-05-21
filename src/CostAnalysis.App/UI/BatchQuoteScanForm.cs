@@ -19,6 +19,7 @@ namespace CostAnalysis.App.UI
         private readonly Button _importButton;
         private readonly DataGridView _grid;
         private readonly Label _statusLabel;
+        private readonly ProgressBar _progressBar;
 
         private volatile bool _cancelRequested;
         private Thread _scanThread;
@@ -83,6 +84,16 @@ namespace CostAnalysis.App.UI
             _grid = BuildGrid();
             root.Controls.Add(_grid, 0, 1);
 
+            var statusPanel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+            root.Controls.Add(statusPanel, 0, 2);
+
             _statusLabel = new Label
             {
                 Dock = DockStyle.Fill,
@@ -90,7 +101,17 @@ namespace CostAnalysis.App.UI
                 ForeColor = Color.FromArgb(110, 110, 115),
                 TextAlign = ContentAlignment.MiddleLeft
             };
-            root.Controls.Add(_statusLabel, 0, 2);
+            statusPanel.Controls.Add(_statusLabel, 0, 0);
+
+            _progressBar = new ProgressBar
+            {
+                Dock = DockStyle.Fill,
+                Minimum = 0,
+                Maximum = 100,
+                Value = 0,
+                Margin = new Padding(8, 7, 0, 7)
+            };
+            statusPanel.Controls.Add(_progressBar, 1, 0);
 
             var buttons = new FlowLayoutPanel
             {
@@ -121,12 +142,25 @@ namespace CostAnalysis.App.UI
                 Dock = DockStyle.Fill,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
                 BackgroundColor = Color.White,
                 RowHeadersVisible = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                MultiSelect = false
+                MultiSelect = false,
+                AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.FromArgb(250, 250, 252) },
+                DefaultCellStyle = new DataGridViewCellStyle
+                {
+                    SelectionBackColor = Color.FromArgb(230, 244, 255),
+                    SelectionForeColor = Color.FromArgb(29, 29, 31)
+                },
+                RowTemplate = { Height = 30 }
             };
+            grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+            grid.ColumnHeadersHeight = 34;
+            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            grid.EnableHeadersVisualStyles = false;
+            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(245, 245, 247);
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(29, 29, 31);
 
             AddColumn(grid, "Status", "状态");
             AddColumn(grid, "FileName", "文件名");
@@ -137,6 +171,7 @@ namespace CostAnalysis.App.UI
             AddColumn(grid, "FilePath", "完整路径");
             AddColumn(grid, "Error", "错误信息");
             grid.Columns["FilePath"].Visible = false;
+            ConfigureScanGridColumns(grid);
             return grid;
         }
 
@@ -177,6 +212,7 @@ namespace CostAnalysis.App.UI
             _successCount = 0;
             _failureCount = 0;
             _cancelRequested = false;
+            SetProgress(0, files.Count);
 
             for (var i = 0; i < files.Count; i++)
             {
@@ -259,6 +295,7 @@ namespace CostAnalysis.App.UI
             RunOnUi(() =>
             {
                 SetScanningState(false);
+                SetProgress(_successCount + _failureCount, _grid.Rows.Count);
                 _statusLabel.Text = _cancelRequested
                     ? string.Format("已停止。成功 {0} 个，失败 {1} 个。", _successCount, _failureCount)
                     : string.Format("扫描完成。成功 {0} 个，失败 {1} 个。", _successCount, _failureCount);
@@ -281,6 +318,7 @@ namespace CostAnalysis.App.UI
             row.Cells["SheetName"].Value = preview.SheetName;
             row.Cells["ItemCount"].Value = preview.Items == null ? 0 : preview.Items.Count;
             row.Cells["Error"].Value = string.Empty;
+            SetProgress(_successCount + _failureCount, _grid.Rows.Count);
             new QuoteTemplateRepository().SaveLearnedTemplate(
                 result.Preview,
                 Convert.ToString(row.Cells["FileName"].Value),
@@ -303,6 +341,8 @@ namespace CostAnalysis.App.UI
             var row = _grid.Rows[rowIndex];
             row.Cells["Status"].Value = "未识别";
             row.Cells["Error"].Value = message;
+            row.Cells["Error"].ToolTipText = message;
+            SetProgress(_successCount + _failureCount, _grid.Rows.Count);
             row.DefaultCellStyle.BackColor = Color.FromArgb(255, 249, 219);
         }
 
@@ -331,6 +371,7 @@ namespace CostAnalysis.App.UI
             _cancelRequested = false;
             SetScanningState(true);
             var targets = BuildAiCleanTargets(rows);
+            SetProgress(0, targets.Count);
             _scanThread = new Thread(() => AiCleanRows(targets, settings));
             _scanThread.IsBackground = true;
             _scanThread.SetApartmentState(ApartmentState.STA);
@@ -459,6 +500,7 @@ namespace CostAnalysis.App.UI
             RunOnUi(() =>
             {
                 SetScanningState(false);
+                SetProgress(success + failure, targets.Count);
                 _statusLabel.Text = _cancelRequested
                     ? "AI 清洗已停止。成功 " + success + " 个，失败 " + failure + " 个。"
                     : "AI 清洗完成。成功 " + success + " 个，失败 " + failure + " 个。";
@@ -573,6 +615,18 @@ namespace CostAnalysis.App.UI
             Cursor = scanning ? Cursors.WaitCursor : Cursors.Default;
         }
 
+        private void SetProgress(int value, int maximum)
+        {
+            if (_progressBar == null)
+            {
+                return;
+            }
+
+            var safeMaximum = Math.Max(1, maximum);
+            _progressBar.Maximum = safeMaximum;
+            _progressBar.Value = Math.Max(0, Math.Min(value, safeMaximum));
+        }
+
         private void RunOnUi(Action action)
         {
             if (IsDisposed)
@@ -603,6 +657,30 @@ namespace CostAnalysis.App.UI
                 HeaderText = header,
                 SortMode = DataGridViewColumnSortMode.NotSortable
             });
+        }
+
+        private static void ConfigureScanGridColumns(DataGridView grid)
+        {
+            SetColumn(grid, "Status", 92, false);
+            SetColumn(grid, "FileName", 260, true);
+            SetColumn(grid, "TemplateType", 150, true);
+            SetColumn(grid, "Supplier", 160, true);
+            SetColumn(grid, "SheetName", 130, false);
+            SetColumn(grid, "ItemCount", 78, false);
+            SetColumn(grid, "Error", 360, true);
+        }
+
+        private static void SetColumn(DataGridView grid, string name, int width, bool wrap)
+        {
+            if (!grid.Columns.Contains(name))
+            {
+                return;
+            }
+
+            var column = grid.Columns[name];
+            column.Width = width;
+            column.MinimumWidth = Math.Min(width, 60);
+            column.DefaultCellStyle.WrapMode = wrap ? DataGridViewTriState.True : DataGridViewTriState.False;
         }
 
         private sealed class BatchQuoteScanResult

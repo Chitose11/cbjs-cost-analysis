@@ -112,6 +112,7 @@ namespace CostAnalysis.App.UI
             buttons.Controls.Add(_undoAiButton);
 
             LoadItems();
+            UpdateImportSelectionSummary();
             LoadRawPreview();
         }
 
@@ -146,13 +147,30 @@ namespace CostAnalysis.App.UI
                 Dock = DockStyle.Fill,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
                 BackgroundColor = Color.White,
                 RowHeadersVisible = false,
-                SelectionMode = DataGridViewSelectionMode.CellSelect
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = true,
+                AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle { BackColor = Color.FromArgb(250, 250, 252) },
+                DefaultCellStyle = new DataGridViewCellStyle
+                {
+                    SelectionBackColor = Color.FromArgb(230, 244, 255),
+                    SelectionForeColor = Color.FromArgb(29, 29, 31)
+                },
+                RowTemplate = { Height = 30 }
             };
+            grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+            grid.ColumnHeadersHeight = 34;
+            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            grid.EnableHeadersVisualStyles = false;
+            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(245, 245, 247);
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(29, 29, 31);
             grid.CellValidating += OnGridCellValidating;
             grid.CellDoubleClick += OnGridCellDoubleClick;
+            grid.CurrentCellDirtyStateChanged += OnGridCurrentCellDirtyStateChanged;
+            grid.CellValueChanged += OnGridCellValueChanged;
+            grid.ColumnHeaderMouseClick += OnGridColumnHeaderMouseClick;
 
             grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Selected", HeaderText = "加入", Width = 48 });
             AddColumn(grid, "MaterialCode", "物料编码");
@@ -165,6 +183,7 @@ namespace CostAnalysis.App.UI
             AddColumn(grid, "PriceTiers", "阶梯价格", true);
             AddColumn(grid, "PriceWarning", "价格预警", true);
             AddColumn(grid, "AiStatus", "AI状态", true);
+            ConfigureImportGridColumns(grid);
             return grid;
         }
 
@@ -255,6 +274,7 @@ namespace CostAnalysis.App.UI
                 row.Tag = item;
                 row.Cells["Selected"].Value = true;
                 FillRow(row, item);
+                ApplyImportRowStyle(row);
             }
         }
 
@@ -478,6 +498,97 @@ namespace CostAnalysis.App.UI
             {
                 EditPriceTiers(_grid.Rows[e.RowIndex]);
             }
+        }
+
+        private void OnGridCurrentCellDirtyStateChanged(object sender, EventArgs e)
+        {
+            if (_grid.IsCurrentCellDirty && _grid.CurrentCell != null && _grid.CurrentCell.OwningColumn.Name == "Selected")
+            {
+                _grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            }
+        }
+
+        private void OnGridCellValueChanged(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0 || _grid.Columns[e.ColumnIndex].Name != "Selected")
+            {
+                return;
+            }
+
+            ApplyImportRowStyle(_grid.Rows[e.RowIndex]);
+            UpdateImportSelectionSummary();
+        }
+
+        private void OnGridColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.ColumnIndex < 0 || _grid.Columns[e.ColumnIndex].Name != "Selected")
+            {
+                return;
+            }
+
+            var shouldSelect = !AllImportRowsSelected();
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row.IsNewRow)
+                {
+                    continue;
+                }
+
+                row.Cells["Selected"].Value = shouldSelect;
+                ApplyImportRowStyle(row);
+            }
+
+            UpdateImportSelectionSummary();
+        }
+
+        private void ApplyImportRowStyle(DataGridViewRow row)
+        {
+            if (row == null || row.IsNewRow)
+            {
+                return;
+            }
+
+            row.DefaultCellStyle.BackColor = IsImportRowSelected(row) ? Color.FromArgb(230, 244, 255) : Color.White;
+        }
+
+        private bool AllImportRowsSelected()
+        {
+            var hasRows = false;
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row.IsNewRow)
+                {
+                    continue;
+                }
+
+                hasRows = true;
+                if (!IsImportRowSelected(row))
+                {
+                    return false;
+                }
+            }
+
+            return hasRows;
+        }
+
+        private static bool IsImportRowSelected(DataGridViewRow row)
+        {
+            var value = row.Cells["Selected"].Value;
+            return value is bool && (bool)value;
+        }
+
+        private void UpdateImportSelectionSummary()
+        {
+            var selected = 0;
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (!row.IsNewRow && IsImportRowSelected(row))
+                {
+                    selected++;
+                }
+            }
+
+            _summaryLabel.Text = BuildSummaryText() + "\r\n已选择：" + selected + " 条，可点击“加入”表头全选/反选。";
         }
 
         private void OnEditPriceTiers(object sender, EventArgs e)
@@ -1081,6 +1192,35 @@ namespace CostAnalysis.App.UI
             }
 
             grid.Columns.Add(column);
+        }
+
+        private static void ConfigureImportGridColumns(DataGridView grid)
+        {
+            SetColumn(grid, "Selected", 54, true, false);
+            SetColumn(grid, "MaterialCode", 118, false, false);
+            SetColumn(grid, "MaterialName", 160, false, true);
+            SetColumn(grid, "FinishedSize", 120, false, false);
+            SetColumn(grid, "MaterialProcess", 360, false, true);
+            SetColumn(grid, "MaterialNameExtracted", 130, false, true);
+            SetColumn(grid, "GramWeight", 76, false, false);
+            SetColumn(grid, "UsageQuantity", 76, false, false);
+            SetColumn(grid, "PriceTiers", 150, false, true);
+            SetColumn(grid, "PriceWarning", 220, false, true);
+            SetColumn(grid, "AiStatus", 150, false, true);
+        }
+
+        private static void SetColumn(DataGridView grid, string name, int width, bool frozen, bool wrap)
+        {
+            if (!grid.Columns.Contains(name))
+            {
+                return;
+            }
+
+            var column = grid.Columns[name];
+            column.Width = width;
+            column.MinimumWidth = Math.Min(width, 54);
+            column.Frozen = frozen;
+            column.DefaultCellStyle.WrapMode = wrap ? DataGridViewTriState.True : DataGridViewTriState.False;
         }
 
         private static string GetCellText(DataGridViewRow row, string columnName)

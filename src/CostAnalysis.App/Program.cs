@@ -14,7 +14,9 @@ namespace CostAnalysis.App
             Application.SetCompatibleTextRenderingDefault(false);
 
             DatabaseInitializer.Initialize();
-            Application.Run(new MainForm());
+            var mainForm = new MainForm();
+            mainForm.Shown += (_, __) => EnvironmentCheckForm.ShowStartupWarningIfNeeded(mainForm);
+            Application.Run(mainForm);
         }
     }
 }

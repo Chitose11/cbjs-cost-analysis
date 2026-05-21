@@ -17,8 +17,10 @@ namespace CostAnalysis.App.UI
         private readonly Color _warningBack = Color.FromArgb(255, 249, 219);
         private readonly Color _missingBack = Color.FromArgb(255, 235, 235);
         private readonly Color _selectedBack = Color.FromArgb(230, 244, 255);
+        private readonly ToolTip _commandTips = new ToolTip();
 
         private readonly DataGridView _grid;
+        private readonly Control _detailCard;
         private readonly Label _statusLabel;
         private readonly TextBox _analysisNoTextBox;
         private readonly TextBox _customerTextBox;
@@ -26,6 +28,11 @@ namespace CostAnalysis.App.UI
         private readonly TextBox _dateTextBox;
         private readonly TextBox _taxTextBox;
         private readonly TextBox _freightTextBox;
+        private readonly Dictionary<string, TextBox> _detailFields = new Dictionary<string, TextBox>();
+        private CheckBox _detailSelectedCheckBox;
+        private Label _detailTitleLabel;
+        private Label _detailStatusLabel;
+        private bool _syncingDetailCard;
         private ListBox _recentAnalysesListBox;
 
         public MainForm()
@@ -62,6 +69,7 @@ namespace CostAnalysis.App.UI
             _freightTextBox.Text = "含运";
 
             _grid = BuildGrid();
+            _detailCard = BuildDetailCard();
             _statusLabel = new Label
             {
                 Dock = DockStyle.Fill,
@@ -72,8 +80,9 @@ namespace CostAnalysis.App.UI
 
             var workspace = (Panel)root.GetControlFromPosition(1, 0);
             var layout = (TableLayoutPanel)workspace.Controls[0];
-            layout.Controls.Add(_grid, 0, 3);
-            layout.Controls.Add(_statusLabel, 0, 4);
+            layout.Controls.Add(_detailCard, 0, 3);
+            layout.Controls.Add(_grid, 0, 4);
+            layout.Controls.Add(_statusLabel, 0, 5);
             RefreshRecentAnalysesList();
         }
 
@@ -94,7 +103,7 @@ namespace CostAnalysis.App.UI
                 BackColor = _panel
             };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 334));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 376));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
@@ -127,6 +136,7 @@ namespace CostAnalysis.App.UI
             AddMenuButton(menu, "工艺规则", OnOpenProcessRules);
             AddMenuButton(menu, "系统设置", OnOpenAiSettings);
             AddMenuButton(menu, "OCR设置", OnOpenOcrSettings);
+            AddMenuButton(menu, "环境检测", OnOpenEnvironmentCheck);
 
             layout.Controls.Add(new Label
             {
@@ -175,12 +185,13 @@ namespace CostAnalysis.App.UI
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 5,
+                RowCount = 6,
                 BackColor = _panel
             };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 88));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 286));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             workspace.Controls.Add(layout);
@@ -197,29 +208,102 @@ namespace CostAnalysis.App.UI
 
             layout.Controls.Add(BuildHeaderPanel(), 0, 1);
 
-            var toolbar = new FlowLayoutPanel
+            layout.Controls.Add(BuildCommandBar(), 0, 2);
+            return workspace;
+        }
+
+        private Control BuildCommandBar()
+        {
+            var bar = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 1,
+                BackColor = Color.White,
+                Margin = new Padding(0, 4, 0, 8)
+            };
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+
+            var importGroup = CreateCommandGroup("数据导入");
+            AddCommandButton(importGroup, "导入报价", OnImportQuote, true, "导入单个报价单并进入确认页");
+            AddCommandButton(importGroup, "批量预扫", OnBatchScanQuotes, false, "扫描文件夹内多个报价单");
+            bar.Controls.Add(importGroup.Parent, 0, 0);
+
+            var detailGroup = CreateCommandGroup("明细操作");
+            AddCommandButton(detailGroup, "新增", OnAddRow, false, "新增一条空白成本明细");
+            AddCommandButton(detailGroup, "删除", OnDeleteSelectedRows, false, "删除已勾选的明细行");
+            AddCommandButton(detailGroup, "阶梯价", OnEditRowPriceTiers, false, "编辑当前明细的阶梯价格");
+            bar.Controls.Add(detailGroup.Parent, 1, 0);
+
+            var costGroup = CreateCommandGroup("成本工具");
+            AddCommandButton(costGroup, "应用规则", OnApplyProcessRules, false, "按工艺规则自动填充空白费用");
+            AddCommandButton(costGroup, "历史参考", OnOpenCostHistoryReference, false, "查看历史成本并套用参考值");
+            AddCommandButton(costGroup, "AI补全", OnAiCompleteCosts, false, "调用 AI 补全空白成本金额");
+            AddCommandButton(costGroup, "MOQ模拟", OnOpenMoqSimulation, false, "模拟阶梯起订量对整单成本的影响");
+            bar.Controls.Add(costGroup.Parent, 2, 0);
+
+            var fileGroup = CreateCommandGroup("文件");
+            AddCommandButton(fileGroup, "保存", OnSaveAnalysis, false, "保存当前成本分析");
+            AddCommandButton(fileGroup, "打开", OnOpenAnalysis, false, "打开历史成本分析");
+            AddCommandButton(fileGroup, "导出", OnExportExcelPlaceholder, false, "导出给客户的 Excel 文件");
+            bar.Controls.Add(fileGroup.Parent, 3, 0);
+
+            return bar;
+        }
+
+        private FlowLayoutPanel CreateCommandGroup(string title)
+        {
+            var shell = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                RowCount = 2,
+                ColumnCount = 1,
+                BackColor = Color.FromArgb(250, 250, 252),
+                Padding = new Padding(8, 4, 8, 6),
+                Margin = new Padding(0, 0, 10, 0)
+            };
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            shell.Controls.Add(new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = title,
+                ForeColor = _muted,
+                TextAlign = ContentAlignment.MiddleLeft
+            }, 0, 0);
+
+            var flow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true
+                WrapContents = true,
+                BackColor = Color.Transparent,
+                Margin = new Padding(0)
             };
-            layout.Controls.Add(toolbar, 0, 2);
+            shell.Controls.Add(flow, 0, 1);
+            return flow;
+        }
 
-            AddPrimaryButton(toolbar, "导入报价单", OnImportQuote);
-            AddSecondaryButton(toolbar, "批量预扫描", OnBatchScanQuotes);
-            AddSecondaryButton(toolbar, "新增明细", OnAddRow);
-            AddSecondaryButton(toolbar, "删除明细", OnDeleteSelectedRows);
-            AddSecondaryButton(toolbar, "编辑阶梯价", OnEditRowPriceTiers);
-            AddSecondaryButton(toolbar, "应用工艺规则", OnApplyProcessRules);
-            AddSecondaryButton(toolbar, "历史参考", OnOpenCostHistoryReference);
-            AddSecondaryButton(toolbar, "AI补全成本", OnAiCompleteCosts);
-            AddSecondaryButton(toolbar, "保存", OnSaveAnalysis);
-            AddSecondaryButton(toolbar, "打开", OnOpenAnalysis);
-            AddSecondaryButton(toolbar, "导出 Excel", OnExportExcelPlaceholder);
-
-            AddSecondaryButton(toolbar, "MOQ模拟", OnOpenMoqSimulation);
-
-            return workspace;
+        private void AddCommandButton(FlowLayoutPanel panel, string text, EventHandler handler, bool primary, string tip)
+        {
+            var button = new Button
+            {
+                Text = text,
+                Width = primary ? 96 : 82,
+                Height = 30,
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 2, 8, 4),
+                BackColor = primary ? _blue : Color.White,
+                ForeColor = primary ? Color.White : _blue
+            };
+            button.FlatAppearance.BorderColor = primary ? _blue : Color.FromArgb(210, 210, 215);
+            button.Click += handler;
+            _commandTips.SetToolTip(button, tip);
+            panel.Controls.Add(button);
         }
 
         private Control BuildHeaderPanel()
@@ -273,21 +357,30 @@ namespace CostAnalysis.App.UI
                 Dock = DockStyle.Fill,
                 AllowUserToAddRows = false,
                 AllowUserToDeleteRows = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
                 BackgroundColor = Color.White,
                 BorderStyle = BorderStyle.FixedSingle,
                 GridColor = Color.FromArgb(210, 210, 215),
                 RowHeadersVisible = false,
-                SelectionMode = DataGridViewSelectionMode.CellSelect,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = true,
                 DefaultCellStyle = new DataGridViewCellStyle
                 {
                     SelectionBackColor = Color.FromArgb(230, 244, 255),
                     SelectionForeColor = Color.FromArgb(29, 29, 31)
-                }
+                },
+                AlternatingRowsDefaultCellStyle = new DataGridViewCellStyle
+                {
+                    BackColor = Color.FromArgb(250, 250, 252)
+                },
+                RowTemplate = { Height = 30 }
             };
 
+            grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
             grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(245, 245, 247);
             grid.ColumnHeadersDefaultCellStyle.ForeColor = _ink;
+            grid.ColumnHeadersHeight = 34;
+            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
             grid.EnableHeadersVisualStyles = false;
 
             grid.Columns.Add(new DataGridViewCheckBoxColumn
@@ -316,14 +409,140 @@ namespace CostAnalysis.App.UI
             AddColumn(grid, "TotalPrice", "总价");
             AddColumn(grid, "ValidationStatus", "状态");
 
+            ConfigureMainGridColumns(grid);
             grid.CellEndEdit += (_, __) => RecalculateRows();
             grid.RowsAdded += (_, __) => ApplyCheckedRowStyles();
             grid.CurrentCellDirtyStateChanged += OnGridCurrentCellDirtyStateChanged;
             grid.CellValueChanged += OnGridCellValueChanged;
             grid.CellMouseDown += OnGridCellMouseDown;
             grid.ColumnHeaderMouseClick += OnGridColumnHeaderMouseClick;
+            grid.SelectionChanged += OnGridSelectionChanged;
+            grid.DataError += OnGridDataError;
             grid.ContextMenuStrip = BuildGridContextMenu();
             return grid;
+        }
+
+        private Control BuildDetailCard()
+        {
+            var shell = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                RowCount = 2,
+                ColumnCount = 1,
+                BackColor = Color.White,
+                Padding = new Padding(8, 4, 8, 8),
+                Margin = new Padding(0, 4, 0, 8)
+            };
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var header = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 3,
+                RowCount = 1,
+                BackColor = Color.White
+            };
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));
+
+            _detailSelectedCheckBox = new CheckBox
+            {
+                Dock = DockStyle.Fill,
+                Text = string.Empty,
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            _detailSelectedCheckBox.CheckedChanged += OnDetailSelectedChanged;
+            header.Controls.Add(_detailSelectedCheckBox, 0, 0);
+
+            _detailTitleLabel = new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = "成本明细",
+                Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold),
+                ForeColor = _ink,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            header.Controls.Add(_detailTitleLabel, 1, 0);
+
+            _detailStatusLabel = new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = "请选择或新增一条明细",
+                ForeColor = _muted,
+                TextAlign = ContentAlignment.MiddleRight
+            };
+            header.Controls.Add(_detailStatusLabel, 2, 0);
+            shell.Controls.Add(header, 0, 0);
+
+            var fields = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 8,
+                BackColor = Color.White
+            };
+            for (var i = 0; i < 4; i++)
+            {
+                fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+            }
+
+            for (var i = 0; i < 4; i++)
+            {
+                fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+                fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            }
+
+            AddDetailField(fields, 0, 0, "物料编码", "MaterialCode");
+            AddDetailField(fields, 1, 0, "物料名称", "MaterialName");
+            AddDetailField(fields, 2, 0, "物料描述", "MaterialDescription");
+            AddDetailField(fields, 3, 0, "供应商", "Supplier");
+            AddDetailField(fields, 0, 2, "材料厂家", "MaterialVendor");
+            AddDetailField(fields, 1, 2, "材料单价", "MaterialUnitPrice");
+            AddDetailField(fields, 2, 2, "原材料克重", "GramWeight");
+            AddDetailField(fields, 3, 2, "展开尺寸", "ExpandedSize");
+            AddDetailField(fields, 0, 4, "材料费", "MaterialCost");
+            AddDetailField(fields, 1, 4, "印刷费", "PrintingCost");
+            AddDetailField(fields, 2, 4, "后工序费", "PostProcessCost");
+            AddDetailField(fields, 3, 4, "其他费用", "OtherCost");
+            AddDetailField(fields, 0, 6, "采购单价", "PurchaseUnitPrice");
+            AddDetailField(fields, 1, 6, "总用量", "TotalQuantity");
+            AddDetailField(fields, 2, 6, "总价", "TotalPrice");
+            AddDetailField(fields, 3, 6, "状态", "ValidationStatus");
+
+            shell.Controls.Add(fields, 0, 1);
+            return shell;
+        }
+
+        private void AddDetailField(TableLayoutPanel panel, int column, int row, string label, string columnName)
+        {
+            panel.Controls.Add(new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = label,
+                ForeColor = _ink,
+                TextAlign = ContentAlignment.BottomLeft,
+                Margin = new Padding(0, 0, 16, 0)
+            }, column, row);
+
+            var textBox = new TextBox
+            {
+                Name = "Detail" + columnName,
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.FromArgb(248, 249, 251),
+                ForeColor = _ink,
+                Margin = new Padding(0, 3, 16, 8)
+            };
+            if (columnName == "TotalPrice" || columnName == "ValidationStatus")
+            {
+                textBox.ReadOnly = true;
+                textBox.BackColor = Color.FromArgb(244, 245, 247);
+            }
+            textBox.TextChanged += OnDetailFieldTextChanged;
+            panel.Controls.Add(textBox, column, row + 1);
+            _detailFields[columnName] = textBox;
         }
 
         private void OnImportQuote(object sender, EventArgs e)
@@ -393,6 +612,8 @@ namespace CostAnalysis.App.UI
             var rowIndex = _grid.Rows.Add();
             _grid.Rows[rowIndex].Cells["Selected"].Value = false;
             _grid.Rows[rowIndex].Cells["No"].Value = rowIndex + 1;
+            _grid.CurrentCell = _grid.Rows[rowIndex].Cells["MaterialCode"];
+            LoadCurrentRowToDetailCard();
             _statusLabel.Text = "已新增一行明细。";
         }
 
@@ -732,7 +953,7 @@ namespace CostAnalysis.App.UI
                 Cursor = Cursors.WaitCursor;
                 var inputs = BuildAiCostCompletionInputs(rows);
                 var result = new DeepSeekClient().SuggestCosts(settings, inputs);
-                var changed = ApplyAiCostCompletionSuggestions(rows, result);
+                var changed = ApplyAiCostCompletionSuggestions(rows, result, inputs);
                 RecalculateRows();
                 _statusLabel.Text = "AI 成本补全完成，更新费用单元格 " + changed + " 个。";
                 MessageBox.Show(this, "AI 成本补全完成，更新费用单元格 " + changed + " 个。请继续人工确认。", "AI补全成本", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -824,15 +1045,19 @@ namespace CostAnalysis.App.UI
             }
 
             var parts = new List<string>();
+            var calculator = new ProcessCostCalculationService();
             foreach (var rule in matches)
             {
-                parts.Add(rule.Keyword + " -> " + rule.CostType + "=" + FormatDecimal(rule.Amount));
+                var calculated = calculator.Calculate(rule, description, description);
+                var amount = calculated.Amount.HasValue ? FormatDecimal(calculated.Amount) : FormatDecimal(rule.Amount);
+                var evidence = string.IsNullOrWhiteSpace(calculated.Evidence) ? string.Empty : " (" + calculated.Evidence + ")";
+                parts.Add(rule.Keyword + " -> " + rule.CostType + "=" + amount + evidence);
             }
 
             return string.Join("；", parts.ToArray());
         }
 
-        private int ApplyAiCostCompletionSuggestions(List<DataGridViewRow> rows, AiCostCompletionResult result)
+        private int ApplyAiCostCompletionSuggestions(List<DataGridViewRow> rows, AiCostCompletionResult result, List<AiCostCompletionInput> inputs)
         {
             var changed = 0;
             if (result == null || result.Items == null)
@@ -848,18 +1073,45 @@ namespace CostAnalysis.App.UI
                 }
 
                 var row = rows[suggestion.Index.Value - 1];
-                changed += ApplyAiSuggestedDecimal(row, "MaterialCost", suggestion.MaterialCost, suggestion);
-                changed += ApplyAiSuggestedDecimal(row, "PrintingCost", suggestion.PrintingCost, suggestion);
-                changed += ApplyAiSuggestedDecimal(row, "PostProcessCost", suggestion.PostProcessCost, suggestion);
-                changed += ApplyAiSuggestedDecimal(row, "OtherCost", suggestion.OtherCost, suggestion);
-                changed += ApplyAiSuggestedDecimal(row, "PurchaseUnitPrice", suggestion.PurchaseUnitPrice, suggestion);
+                var evidence = BuildAiCostEvidence(suggestion.Index.Value, inputs);
+                changed += ApplyAiSuggestedDecimal(row, "MaterialCost", suggestion.MaterialCost, suggestion, evidence);
+                changed += ApplyAiSuggestedDecimal(row, "PrintingCost", suggestion.PrintingCost, suggestion, evidence);
+                changed += ApplyAiSuggestedDecimal(row, "PostProcessCost", suggestion.PostProcessCost, suggestion, evidence);
+                changed += ApplyAiSuggestedDecimal(row, "OtherCost", suggestion.OtherCost, suggestion, evidence);
+                changed += ApplyAiSuggestedDecimal(row, "PurchaseUnitPrice", suggestion.PurchaseUnitPrice, suggestion, evidence);
+                if (!string.IsNullOrWhiteSpace(evidence))
+                {
+                    row.Cells["ValidationStatus"].ToolTipText = evidence;
+                }
                 row.Cells["ValidationStatus"].Value = suggestion.RequiresReview ? "AI建议需确认" : "AI建议已填充";
             }
 
             return changed;
         }
 
-        private static int ApplyAiSuggestedDecimal(DataGridViewRow row, string columnName, decimal? value, AiCostCompletionSuggestion suggestion)
+        private static string BuildAiCostEvidence(int index, List<AiCostCompletionInput> inputs)
+        {
+            if (inputs == null || index <= 0 || index > inputs.Count)
+            {
+                return string.Empty;
+            }
+
+            var input = inputs[index - 1];
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(input.HistorySummary))
+            {
+                parts.Add("历史参考：" + input.HistorySummary);
+            }
+
+            if (!string.IsNullOrWhiteSpace(input.ProcessRuleSummary))
+            {
+                parts.Add("工艺依据：" + input.ProcessRuleSummary);
+            }
+
+            return string.Join("\r\n", parts.ToArray());
+        }
+
+        private static int ApplyAiSuggestedDecimal(DataGridViewRow row, string columnName, decimal? value, AiCostCompletionSuggestion suggestion, string evidence)
         {
             if (!value.HasValue || !string.IsNullOrWhiteSpace(Convert.ToString(row.Cells[columnName].Value)))
             {
@@ -940,10 +1192,127 @@ namespace CostAnalysis.App.UI
             {
                 ApplyCheckedRowStyle(_grid.Rows[e.RowIndex]);
                 UpdateSelectedRowsStatus();
+                LoadCurrentRowToDetailCard();
                 return;
             }
 
             RecalculateRows();
+            LoadCurrentRowToDetailCard();
+        }
+
+        private void OnGridSelectionChanged(object sender, EventArgs e)
+        {
+            LoadCurrentRowToDetailCard();
+        }
+
+        private void OnDetailSelectedChanged(object sender, EventArgs e)
+        {
+            if (_syncingDetailCard)
+            {
+                return;
+            }
+
+            var row = GetCurrentDataRow();
+            if (row == null)
+            {
+                return;
+            }
+
+            row.Cells["Selected"].Value = _detailSelectedCheckBox.Checked;
+            ApplyCheckedRowStyle(row);
+            UpdateSelectedRowsStatus();
+        }
+
+        private void OnDetailFieldTextChanged(object sender, EventArgs e)
+        {
+            if (_syncingDetailCard)
+            {
+                return;
+            }
+
+            var textBox = sender as TextBox;
+            if (textBox == null)
+            {
+                return;
+            }
+
+            var columnName = GetDetailColumnName(textBox);
+            if (string.IsNullOrWhiteSpace(columnName) ||
+                columnName == "TotalPrice" ||
+                columnName == "ValidationStatus")
+            {
+                return;
+            }
+
+            var row = GetCurrentDataRow();
+            if (row == null || !row.DataGridView.Columns.Contains(columnName))
+            {
+                return;
+            }
+
+            row.Cells[columnName].Value = textBox.Text;
+            RecalculateRows();
+        }
+
+        private void LoadCurrentRowToDetailCard()
+        {
+            if (_detailFields.Count == 0)
+            {
+                return;
+            }
+
+            var row = GetCurrentDataRow();
+            _syncingDetailCard = true;
+            try
+            {
+                if (row == null)
+                {
+                    _detailTitleLabel.Text = "成本明细";
+                    _detailStatusLabel.Text = "请选择或新增一条明细";
+                    _detailSelectedCheckBox.Checked = false;
+                    foreach (var box in _detailFields.Values)
+                    {
+                        box.Text = string.Empty;
+                    }
+
+                    return;
+                }
+
+                _detailTitleLabel.Text = "成本明细 " + Convert.ToString(row.Cells["No"].Value);
+                _detailStatusLabel.Text = Convert.ToString(row.Cells["ValidationStatus"].Value);
+                _detailSelectedCheckBox.Checked = IsRowChecked(row);
+                foreach (var pair in _detailFields)
+                {
+                    pair.Value.Text = row.DataGridView.Columns.Contains(pair.Key)
+                        ? Convert.ToString(row.Cells[pair.Key].Value)
+                        : string.Empty;
+                }
+            }
+            finally
+            {
+                _syncingDetailCard = false;
+            }
+        }
+
+        private static string GetDetailColumnName(Control control)
+        {
+            const string prefix = "Detail";
+            return control != null && control.Name.StartsWith(prefix, StringComparison.Ordinal)
+                ? control.Name.Substring(prefix.Length)
+                : string.Empty;
+        }
+
+        private void OnGridDataError(object sender, DataGridViewDataErrorEventArgs e)
+        {
+            if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+            {
+                var cell = _grid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                cell.ErrorText = "当前输入格式不正确，请检查后再继续。";
+                cell.Style.BackColor = _missingBack;
+                _statusLabel.Text = "发现格式错误：请检查高亮单元格。";
+            }
+
+            e.ThrowException = false;
         }
 
         private void OnGridColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
@@ -1088,13 +1457,16 @@ namespace CostAnalysis.App.UI
         {
             var changed = 0;
             var repository = new ProcessCostRuleRepository();
+            var calculator = new ProcessCostCalculationService();
             foreach (var row in rows)
             {
                 var text = Convert.ToString(row.Cells["MaterialDescription"].Value);
+                var sizeText = Convert.ToString(row.Cells["ExpandedSize"].Value);
                 var matches = repository.FindMatches(text);
                 foreach (var rule in matches)
                 {
-                    if (!rule.Amount.HasValue)
+                    var calculated = calculator.Calculate(rule, text, sizeText);
+                    if (!calculated.Amount.HasValue)
                     {
                         continue;
                     }
@@ -1102,7 +1474,7 @@ namespace CostAnalysis.App.UI
                     var columnName = NormalizeRuleCostColumn(rule.CostType);
                     if (string.IsNullOrWhiteSpace(Convert.ToString(row.Cells[columnName].Value)))
                     {
-                        row.Cells[columnName].Value = rule.Amount.Value.ToString("0.####");
+                        row.Cells[columnName].Value = calculated.Amount.Value.ToString("0.####");
                         row.Cells[columnName].Style.BackColor = Color.FromArgb(232, 244, 255);
                         row.Cells[columnName].ToolTipText = "由工艺规则匹配：" + rule.Keyword;
                         changed++;
@@ -1132,6 +1504,14 @@ namespace CostAnalysis.App.UI
         private void OnOpenOcrSettings(object sender, EventArgs e)
         {
             using (var form = new OcrSettingsForm())
+            {
+                form.ShowDialog(this);
+            }
+        }
+
+        private void OnOpenEnvironmentCheck(object sender, EventArgs e)
+        {
+            using (var form = new EnvironmentCheckForm())
             {
                 form.ShowDialog(this);
             }
@@ -1424,6 +1804,13 @@ namespace CostAnalysis.App.UI
 
             ApplyProcessRulesToRows(GetRowsByStartIndex(_grid.Rows.Count - items.Count));
             RecalculateRows();
+            var firstNewRow = Math.Max(0, _grid.Rows.Count - items.Count);
+            if (_grid.Rows.Count > 0)
+            {
+                _grid.CurrentCell = _grid.Rows[firstNewRow].Cells["MaterialCode"];
+            }
+
+            LoadCurrentRowToDetailCard();
         }
 
         private System.Collections.Generic.List<DataGridViewRow> GetRowsByStartIndex(int startIndex)
@@ -1673,6 +2060,43 @@ namespace CostAnalysis.App.UI
                 HeaderText = headerText,
                 SortMode = DataGridViewColumnSortMode.NotSortable
             });
+        }
+
+        private static void ConfigureMainGridColumns(DataGridView grid)
+        {
+            SetColumn(grid, "Selected", 56, true, false);
+            SetColumn(grid, "No", 52, true, true);
+            SetColumn(grid, "MaterialCode", 116, true, true);
+            SetColumn(grid, "MaterialName", 150, false, true);
+            SetColumn(grid, "MaterialDescription", 340, false, true);
+            SetColumn(grid, "Supplier", 150, false, true);
+            SetColumn(grid, "BaseMaterialName", 120, false, true);
+            SetColumn(grid, "MaterialVendor", 120, false, true);
+            SetColumn(grid, "MaterialUnitPrice", 86, false, false);
+            SetColumn(grid, "GramWeight", 92, false, false);
+            SetColumn(grid, "ExpandedSize", 116, false, false);
+            SetColumn(grid, "MaterialCost", 76, false, false);
+            SetColumn(grid, "PrintingCost", 76, false, false);
+            SetColumn(grid, "PostProcessCost", 88, false, false);
+            SetColumn(grid, "OtherCost", 70, false, false);
+            SetColumn(grid, "PurchaseUnitPrice", 86, false, false);
+            SetColumn(grid, "TotalQuantity", 86, false, false);
+            SetColumn(grid, "TotalPrice", 86, false, false);
+            SetColumn(grid, "ValidationStatus", 180, false, true);
+        }
+
+        private static void SetColumn(DataGridView grid, string name, int width, bool frozen, bool wrap)
+        {
+            if (!grid.Columns.Contains(name))
+            {
+                return;
+            }
+
+            var column = grid.Columns[name];
+            column.Width = width;
+            column.MinimumWidth = Math.Min(width, 60);
+            column.Frozen = frozen;
+            column.DefaultCellStyle.WrapMode = wrap ? DataGridViewTriState.True : DataGridViewTriState.False;
         }
 
         private static TextBox FindHeaderTextBox(Control root, string name)

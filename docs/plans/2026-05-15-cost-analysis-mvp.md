@@ -578,6 +578,7 @@ AI 不允许决定：
 45. 完成 AI 未知单据批量清洗后续阶段的本地模板沉淀：新增 `QuoteTemplateRepository` 使用已有 `quote_templates` 表保存学习模板；普通扫描成功和 AI 清洗成功后都会按表头关键词、模板类型、表头行、数据起始行等信息沉淀本地模板参考。后续 DeepSeek 报价单识别请求会自动附带相似模板提示，让同类未知单据更容易被稳定识别；规则仍作为辅助参考，最终以当前原始预览和人工确认结果为准。
 46. 重新拉起 PDF 自动解析：外部提取服务升级为旁路 `.txt`、`pdftotext -layout`、`pdftotext -raw`、`pdftoppm+tesseract OCR` 的多级链路；外部提取结果会先做可读性过滤，明显乱码、扫描仪元数据和不可读符号不会再进入预览。文本解析器改为优先支持正常中文/英文报价字段，可识别物料编码、尺寸、材质/工艺、克重和 `500-2499=5.8` 这类阶梯价；对于图片型 PDF，如果本机没有 Poppler/tesseract，则明确提示安装工具或使用同名 `.txt` 旁路文本。
 47. 补上 Win7 友好的 PDF/OCR 外部工具配置：新增 `OCR设置` 窗口和 `ocr_tool_settings` 本地表，可分别配置 Poppler 目录、`pdftotext.exe`、`pdftoppm.exe`、`tesseract.exe` 与 OCR 语言。外部提取服务查找顺序为：用户配置路径、程序目录下 `tools/poppler` / `tools/tesseract` 便携目录、系统 `PATH`，并提供检测状态，方便在不改系统环境变量的情况下启用图片型 PDF OCR。
+48. 增加 Win7 运行环境检测：启动主窗体后自动检查操作系统版本、Windows 7 SP1、.NET Framework 4.8、系统/进程位数和内置 OCR 工具；侧边栏新增 `环境检测` 窗口，可重新检测并复制结果。若发现 Win7 未安装 SP1、.NET 4.8 缺失或 32 位系统导致 OCR 不可用，会用明确中文说明提示处理方式。
 
 ---
 

@@ -91,7 +91,7 @@ VALUES
             return sb.ToString();
         }
 
-        private List<QuoteTemplateRecord> GetAllEnabled()
+        public List<QuoteTemplateRecord> GetAllEnabled()
         {
             var records = new List<QuoteTemplateRecord>();
             using (var connection = new SQLiteConnection(DatabaseInitializer.ConnectionString))
@@ -164,7 +164,7 @@ LIMIT 200;", connection))
             }
 
             var startRow = preview.HeaderRow > 0 ? preview.HeaderRow : 1;
-            var endRow = Math.Min(preview.RawSheet.Rows, startRow + 4);
+            var endRow = preview.HeaderRow > 0 ? Math.Min(preview.RawSheet.Rows, startRow + 4) : Math.Min(preview.RawSheet.Rows, 20);
             for (var row = startRow; row <= endRow; row++)
             {
                 for (var col = 1; col <= preview.RawSheet.Columns; col++)
@@ -215,8 +215,127 @@ LIMIT 200;", connection))
                 quantity_row = preview.QuantityRow,
                 data_start_row = preview.DataStartRow,
                 item_count = itemCount,
-                learned_at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                learned_at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                columns = BuildColumnMap(preview),
+                price_columns = BuildPriceColumns(preview)
             });
+        }
+
+        private static Dictionary<string, int> BuildColumnMap(QuoteImportPreview preview)
+        {
+            var map = new Dictionary<string, int>();
+            if (preview == null || preview.RawSheet == null || preview.Items == null || preview.Items.Count == 0)
+            {
+                return map;
+            }
+
+            var row = preview.DataStartRow > 0 ? preview.DataStartRow : Math.Max(1, preview.HeaderRow + 1);
+            var first = preview.Items[0];
+            AddColumn(map, "code", FindColumnForValue(preview, row, first.MaterialCode));
+            AddColumn(map, "name", FindColumnForValue(preview, row, first.RawName, first.MaterialName));
+            AddColumn(map, "size", FindColumnForValue(preview, row, first.FinishedSize));
+            AddColumn(map, "process", FindColumnForValue(preview, row, first.MaterialProcess));
+            AddColumn(map, "material_name", FindColumnForValue(preview, row, first.MaterialNameExtracted));
+            AddColumn(map, "gram_weight", FindColumnForValue(preview, row, first.GramWeight));
+            AddColumn(map, "usage", FindColumnForDecimal(preview, row, first.UsageQuantity));
+            return map;
+        }
+
+        private static List<Dictionary<string, object>> BuildPriceColumns(QuoteImportPreview preview)
+        {
+            var result = new List<Dictionary<string, object>>();
+            if (preview == null || preview.RawSheet == null || preview.Items == null || preview.Items.Count == 0)
+            {
+                return result;
+            }
+
+            var row = preview.DataStartRow > 0 ? preview.DataStartRow : Math.Max(1, preview.HeaderRow + 1);
+            var item = preview.Items[0];
+            if (item.PriceTiers == null)
+            {
+                return result;
+            }
+
+            foreach (var tier in item.PriceTiers)
+            {
+                var column = FindColumnForDecimal(preview, row, tier.UnitPrice);
+                if (column <= 0)
+                {
+                    continue;
+                }
+
+                result.Add(new Dictionary<string, object>
+                {
+                    { "column", column },
+                    { "label", tier.Label ?? string.Empty },
+                    { "min_quantity", tier.MinQuantity.HasValue ? (object)tier.MinQuantity.Value : null },
+                    { "max_quantity", tier.MaxQuantity.HasValue ? (object)tier.MaxQuantity.Value : null }
+                });
+            }
+
+            return result;
+        }
+
+        private static void AddColumn(Dictionary<string, int> map, string key, int column)
+        {
+            if (column > 0 && !map.ContainsKey(key))
+            {
+                map[key] = column;
+            }
+        }
+
+        private static int FindColumnForValue(QuoteImportPreview preview, int row, params string[] values)
+        {
+            if (preview == null || preview.RawSheet == null || preview.RawSheet.Cells == null || values == null)
+            {
+                return 0;
+            }
+
+            for (var col = 1; col <= preview.RawSheet.Columns; col++)
+            {
+                var cell = NormalizeValue(preview.RawSheet.Cells[row, col]);
+                if (string.IsNullOrWhiteSpace(cell))
+                {
+                    continue;
+                }
+
+                foreach (var value in values)
+                {
+                    var target = NormalizeValue(value);
+                    if (!string.IsNullOrWhiteSpace(target) &&
+                        (cell == target || cell.IndexOf(target, StringComparison.OrdinalIgnoreCase) >= 0 || target.IndexOf(cell, StringComparison.OrdinalIgnoreCase) >= 0))
+                    {
+                        return col;
+                    }
+                }
+            }
+
+            return 0;
+        }
+
+        private static int FindColumnForDecimal(QuoteImportPreview preview, int row, decimal? value)
+        {
+            if (!value.HasValue || preview == null || preview.RawSheet == null || preview.RawSheet.Cells == null)
+            {
+                return 0;
+            }
+
+            for (var col = 1; col <= preview.RawSheet.Columns; col++)
+            {
+                decimal number;
+                if (decimal.TryParse((preview.RawSheet.Cells[row, col] ?? string.Empty).Trim(), out number) &&
+                    Math.Abs(number - value.Value) <= 0.0001m)
+                {
+                    return col;
+                }
+            }
+
+            return 0;
+        }
+
+        private static string NormalizeValue(string value)
+        {
+            return (value ?? string.Empty).Replace(" ", string.Empty).Trim();
         }
 
         private static string Safe(string value)

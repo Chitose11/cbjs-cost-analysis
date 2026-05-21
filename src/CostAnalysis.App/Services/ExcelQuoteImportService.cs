@@ -628,6 +628,12 @@ namespace CostAnalysis.App.Services
 
         private static QuoteImportPreview ReadCellsAsPreview(string sheetName, string[,] cells, int rows, int cols)
         {
+            var learnedPreview = new LearnedQuoteTemplateService().TryApply(sheetName, cells, rows, cols);
+            if (learnedPreview != null && learnedPreview.Items.Count > 0)
+            {
+                return learnedPreview;
+            }
+
             var headers = FindHeaders(cells, rows, cols);
             if (headers.Count == 0)
             {
@@ -962,9 +968,35 @@ namespace CostAnalysis.App.Services
             var quantityOnHeader = priceColumns.Exists(x => x.LabelSourceRow == row);
             candidate.QuantityRow = quantityOnHeader ? row : row + 1;
             candidate.DataStartRow = quantityOnHeader ? row + 1 : row + 2;
+            var isStickerTemplate = RowContainsStickerKeywords(cells, row, cols) || RowContainsStickerKeywords(cells, row + 1, cols);
             candidate.TemplateType = candidate.ProcessColumn > 0 ? "普通报价单" : "新版报价单";
+            if (isStickerTemplate)
+            {
+                candidate.TemplateType = "\u8d34\u7eb8/\u677f\u8d34\u62a5\u4ef7\u5355";
+                candidate.Score++;
+            }
+
             candidate.Score += Math.Min(priceColumns.Count, 2);
             return candidate;
+        }
+
+        private static bool RowContainsStickerKeywords(string[,] cells, int row, int cols)
+        {
+            if (cells == null || row <= 0 || row >= cells.GetLength(0))
+            {
+                return false;
+            }
+
+            for (var col = 1; col <= cols; col++)
+            {
+                var text = Get(cells, row, col);
+                if (ContainsAny(text, "\u8d34\u7eb8", "\u6807\u7b7e", "\u6807\u8d34", "\u677f\u8d34", "\u80f6\u8d34", "PET", "\u4e0d\u5e72\u80f6"))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static List<PriceColumn> DetectPriceColumns(string[,] cells, int headerRow, int nextRow, int cols)
