@@ -7,10 +7,13 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using CostAnalysis.App.Data;
 using CostAnalysis.App.Services;
+using MetroFramework;
+using MetroFramework.Controls;
+using MetroFramework.Forms;
 
 namespace CostAnalysis.App.UI
 {
-    internal sealed class QuoteImportPreviewForm : Form
+    internal sealed class QuoteImportPreviewForm : MetroForm
     {
         private readonly QuoteImportPreview _preview;
         private readonly DataGridView _grid;
@@ -47,6 +50,9 @@ namespace CostAnalysis.App.UI
             Text = "报价单导入确认";
             StartPosition = FormStartPosition.CenterParent;
             Size = new Size(1180, 700);
+            Style = MetroColorStyle.Blue;
+            Theme = MetroThemeStyle.Light;
+            ShadowType = MetroFormShadowType.DropShadow;
             Font = new Font("Microsoft YaHei UI", 9F);
 
             var root = new TableLayoutPanel
@@ -75,45 +81,81 @@ namespace CostAnalysis.App.UI
             };
             root.Controls.Add(buttons, 0, 2);
 
-            var confirm = new Button { Text = "确认加入", Width = 96, Height = 32 };
+            var confirm = CreateMetroActionButton("确认加入", true, 104);
             confirm.Click += (_, __) => Confirm();
             buttons.Controls.Add(confirm);
 
-            var cancel = new Button { Text = "取消", Width = 82, Height = 32 };
+            var cancel = CreateMetroActionButton("取消", false, 86);
             cancel.Click += (_, __) => DialogResult = DialogResult.Cancel;
             buttons.Controls.Add(cancel);
 
-            _editPriceTiersButton = new Button { Text = "编辑阶梯价", Width = 108, Height = 32 };
+            _editPriceTiersButton = CreateMetroActionButton("编辑阶梯价", false, 118);
             _editPriceTiersButton.Click += OnEditPriceTiers;
             buttons.Controls.Add(_editPriceTiersButton);
 
-            _aiAssistButton = new Button { Text = "AI辅助识别", Width = 112, Height = 32 };
+            _aiAssistButton = CreateMetroActionButton("AI辅助识别", false, 118);
             _aiAssistButton.Click += OnAiAssist;
             buttons.Controls.Add(_aiAssistButton);
 
-            _pasteTextButton = new Button { Text = "粘贴文本", Width = 92, Height = 32 };
+            _pasteTextButton = CreateMetroActionButton("粘贴文本", false, 104);
             _pasteTextButton.Click += OnPasteRawText;
             buttons.Controls.Add(_pasteTextButton);
 
-            _aiPreviewButton = new Button { Text = "AI请求预览", Width = 108, Height = 32 };
-            _warningSummaryButton = new Button { Text = "预警汇总", Width = 92, Height = 32 };
+            _aiPreviewButton = CreateMetroActionButton("AI请求预览", false, 118);
+            _warningSummaryButton = CreateMetroActionButton("预警汇总", false, 104);
             _warningSummaryButton.Click += OnShowWarningSummary;
             buttons.Controls.Add(_warningSummaryButton);
 
             _aiPreviewButton.Click += OnAiRequestPreview;
             buttons.Controls.Add(_aiPreviewButton);
 
-            _aiResultButton = new Button { Text = "查看AI结果", Width = 108, Height = 32, Enabled = false };
+            _aiResultButton = CreateMetroActionButton("查看AI结果", false, 118);
+            _aiResultButton.Enabled = false;
             _aiResultButton.Click += OnViewAiResult;
             buttons.Controls.Add(_aiResultButton);
 
-            _undoAiButton = new Button { Text = "撤销AI改动", Width = 108, Height = 32, Enabled = false };
+            _undoAiButton = CreateMetroActionButton("撤销AI改动", false, 118);
+            _undoAiButton.Enabled = false;
             _undoAiButton.Click += OnUndoAiChanges;
             buttons.Controls.Add(_undoAiButton);
 
+            NormalizeActionButtons(buttons);
             LoadItems();
             UpdateImportSelectionSummary();
             LoadRawPreview();
+        }
+
+        private static void NormalizeActionButtons(FlowLayoutPanel panel)
+        {
+            foreach (Control control in panel.Controls)
+            {
+                var button = control as Button;
+                if (button == null)
+                {
+                    continue;
+                }
+
+                button.AutoEllipsis = true;
+                button.Height = 34;
+                button.Width = Math.Max(button.Width + 12, Math.Min(136, TextRenderer.MeasureText(button.Text ?? string.Empty, button.Font).Width + 30));
+            }
+        }
+
+        private static MetroButton CreateMetroActionButton(string text, bool primary, int minWidth)
+        {
+            return new MetroButton
+            {
+                Text = text,
+                Width = minWidth,
+                Height = 34,
+                Style = primary ? MetroColorStyle.Blue : MetroColorStyle.Silver,
+                Theme = MetroThemeStyle.Light,
+                UseSelectable = true,
+                Highlight = primary,
+                DisplayFocus = true,
+                FontSize = MetroButtonSize.Medium,
+                Margin = new Padding(8, 5, 0, 5)
+            };
         }
 
         private Label BuildSummaryLabel()
@@ -131,13 +173,19 @@ namespace CostAnalysis.App.UI
         {
             return string.Format(
                 "供应商：{0}\r\nSheet：{1}    模板：{2}    表头行：{3}    数量行：{4}    数据起始行：{5}    物料：{6} 条",
-                _preview.Supplier,
-                _preview.SheetName,
-                _preview.TemplateType,
+                ShortText(_preview.Supplier, 34),
+                ShortText(_preview.SheetName, 18),
+                ShortText(_preview.TemplateType, 42),
                 _preview.HeaderRow,
                 _preview.QuantityRow,
                 _preview.DataStartRow,
                 _preview.Items == null ? 0 : _preview.Items.Count);
+        }
+
+        private static string ShortText(string value, int maxLength)
+        {
+            var text = string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+            return text.Length <= maxLength ? text : text.Substring(0, Math.Max(0, maxLength - 1)) + "…";
         }
 
         private DataGridView BuildGrid()

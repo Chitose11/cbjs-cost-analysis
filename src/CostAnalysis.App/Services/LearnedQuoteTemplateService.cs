@@ -1,6 +1,8 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 using CostAnalysis.App.Data;
 
@@ -44,6 +46,11 @@ namespace CostAnalysis.App.Services
                 return null;
             }
 
+            if (!HasReliableColumnMap(columns))
+            {
+                return null;
+            }
+
             var dataStartRow = GetInt(map, "data_start_row");
             if (dataStartRow <= 0)
             {
@@ -54,7 +61,7 @@ namespace CostAnalysis.App.Services
             {
                 SheetName = sheetName,
                 Supplier = GetString(map, "supplier"),
-                TemplateType = "本地学习模板-" + (template.Name ?? string.Empty),
+                TemplateType = "鏈湴瀛︿範妯℃澘-" + (template.Name ?? string.Empty),
                 Confidence = 0.75,
                 HeaderRow = GetInt(map, "header_row"),
                 QuantityRow = GetInt(map, "quantity_row"),
@@ -98,7 +105,84 @@ namespace CostAnalysis.App.Services
                 }
             }
 
-            return preview;
+            return HasReliableItems(preview.Items) ? preview : null;
+        }
+
+        private static bool HasReliableColumnMap(Dictionary<string, object> columns)
+        {
+            var importantKeys = new[] { "code", "name", "size", "process", "material_name", "gram_weight", "usage" };
+            var mapped = importantKeys
+                .Select(key => GetInt(columns, key))
+                .Where(column => column > 0)
+                .ToList();
+            if (mapped.Count < 2)
+            {
+                return false;
+            }
+
+            if (mapped.Distinct().Count() < Math.Min(2, mapped.Count))
+            {
+                return false;
+            }
+
+            var nameColumn = GetInt(columns, "name");
+            var sizeColumn = GetInt(columns, "size");
+            var processColumn = GetInt(columns, "process");
+            return nameColumn > 0 && (sizeColumn > 0 || processColumn > 0 || GetInt(columns, "code") > 0);
+        }
+
+        private static bool HasReliableItems(List<QuoteImportItem> items)
+        {
+            if (items == null || items.Count == 0)
+            {
+                return false;
+            }
+
+            var reliable = 0;
+            foreach (var item in items)
+            {
+                if (LooksLikeRecognizedItem(item))
+                {
+                    reliable++;
+                }
+            }
+
+            return reliable > 0 && reliable >= Math.Max(1, items.Count / 2);
+        }
+
+        private static bool LooksLikeRecognizedItem(QuoteImportItem item)
+        {
+            if (item == null)
+            {
+                return false;
+            }
+
+            var name = (item.MaterialName ?? item.RawName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(name) || IsPureSerial(name) || LooksLikeFooterText(name))
+            {
+                return false;
+            }
+
+            var hasPrice = item.PriceTiers != null && item.PriceTiers.Count > 0;
+            var hasBusinessField = !string.IsNullOrWhiteSpace(item.MaterialCode) ||
+                                   !string.IsNullOrWhiteSpace(item.FinishedSize) ||
+                                   !string.IsNullOrWhiteSpace(item.MaterialProcess);
+            return hasPrice && hasBusinessField;
+        }
+
+        private static bool IsPureSerial(string value)
+        {
+            return Regex.IsMatch((value ?? string.Empty).Trim(), @"^\d{1,3}$");
+        }
+
+        private static bool LooksLikeFooterText(string value)
+        {
+            var text = value ?? string.Empty;
+            return text.IndexOf("\u4ea4\u8d27\u671f", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("\u4ed8\u6b3e", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("\u8c22\u8c22", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("\u5907\u6ce8", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("\u62a5\u4ef7\u6709\u6548", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static List<PriceTier> ReadPriceTiers(Dictionary<string, object> map, string[,] cells, int row)

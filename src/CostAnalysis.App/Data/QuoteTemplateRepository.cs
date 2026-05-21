@@ -278,7 +278,7 @@ LIMIT 200;", connection))
 
         private static void AddColumn(Dictionary<string, int> map, string key, int column)
         {
-            if (column > 0 && !map.ContainsKey(key))
+            if (column > 0 && !map.ContainsKey(key) && !map.ContainsValue(column))
             {
                 map[key] = column;
             }
