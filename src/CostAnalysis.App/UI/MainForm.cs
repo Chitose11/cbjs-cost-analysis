@@ -13,7 +13,7 @@ namespace CostAnalysis.App.UI
 {
     internal sealed class MainForm : MetroForm
     {
-        private readonly Color _canvas = Color.FromArgb(244, 248, 255);
+        private readonly Color _canvas = Color.White;
         private readonly Color _panel = Color.White;
         private readonly Color _ink = Color.FromArgb(29, 29, 31);
         private readonly Color _muted = Color.FromArgb(110, 110, 115);
@@ -38,10 +38,12 @@ namespace CostAnalysis.App.UI
         private MetroLabel _detailTitleLabel;
         private MetroLabel _detailStatusLabel;
         private MetroPanel _detailCardsPanel;
+        private TableLayoutPanel _workspaceLayout;
         private bool _syncingDetailCard;
+        private bool _updatingGridFromDetail;
         private bool _refreshingDetailCards;
         private bool _allDetailCardsCollapsed;
-        private ListBox _recentAnalysesListBox;
+        private MetroListView _recentAnalysesListBox;
 
         public MainForm()
         {
@@ -60,9 +62,9 @@ namespace CostAnalysis.App.UI
                 ColumnCount = 2,
                 RowCount = 1,
                 BackColor = _canvas,
-                Padding = new Padding(16)
+                Padding = new Padding(0)
             };
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 240));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             Controls.Add(root);
 
@@ -82,7 +84,7 @@ namespace CostAnalysis.App.UI
             _grid = BuildGrid();
             _detailCard = BuildDetailCard();
             _detailCardsArea = BuildDetailCardsArea();
-            _statusLabel = CreateMetroLabel()
+            _statusLabel = new MetroLabel
             {
                 Dock = DockStyle.Fill,
                 Text = "就绪。本原型已初始化本地 SQLite 数据库。",
@@ -90,11 +92,9 @@ namespace CostAnalysis.App.UI
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            var workspace = (MetroPanel)root.GetControlFromPosition(1, 0);
-            var layout = (TableLayoutPanel)workspace.Controls[0];
-            layout.Controls.Add(_detailCardsArea, 0, 3);
-            layout.Controls.Add(_grid, 0, 4);
-            layout.Controls.Add(_statusLabel, 0, 5);
+            _workspaceLayout.Controls.Add(_detailCardsArea, 0, 3);
+            _workspaceLayout.Controls.Add(_grid, 0, 4);
+            _workspaceLayout.Controls.Add(_statusLabel, 0, 5);
             _grid.Visible = true;
             RefreshRecentAnalysesList();
             RefreshDetailCards();
@@ -125,7 +125,7 @@ namespace CostAnalysis.App.UI
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             sidebar.Controls.Add(layout);
 
-            var title = CreateMetroLabel()
+            var title = new MetroLabel
             {
                 Text = "成本分析",
                 ForeColor = _ink,
@@ -135,14 +135,19 @@ namespace CostAnalysis.App.UI
             };
             layout.Controls.Add(title, 0, 0);
 
-            var menu = new FlowLayoutPanel
+            var menu = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false,
                 Padding = new Padding(0, 12, 0, 0),
-                AutoScroll = true
+                ColumnCount = 1,
+                RowCount = 8,
+                BackColor = _panel
             };
+            menu.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            for (var i = 0; i < 8; i++)
+            {
+                menu.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+            }
             layout.Controls.Add(menu, 0, 1);
 
             AddMenuButton(menu, "成本分析列表", (_, __) => RefreshRecentAnalysesList(), true);
@@ -154,7 +159,7 @@ namespace CostAnalysis.App.UI
             AddMenuButton(menu, "OCR设置", OnOpenOcrSettings);
             AddMenuButton(menu, "环境检测", OnOpenEnvironmentCheck);
 
-            layout.Controls.Add(CreateMetroLabel()
+            layout.Controls.Add(new MetroLabel
             {
                 Text = "最近单据",
                 Dock = DockStyle.Fill,
@@ -162,12 +167,16 @@ namespace CostAnalysis.App.UI
                 ForeColor = _muted
             }, 0, 2);
 
-            _recentAnalysesListBox = new ListBox
+            _recentAnalysesListBox = new MetroListView
             {
                 Dock = DockStyle.Fill,
                 BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle,
-                DisplayMember = "DisplayText",
-                IntegralHeight = false
+                View = View.List,
+                FullRowSelect = true,
+                HeaderStyle = ColumnHeaderStyle.None,
+                Style = MetroColorStyle.Blue,
+                Theme = MetroThemeStyle.Light,
+                UseSelectable = true
             };
             _recentAnalysesListBox.DoubleClick += OnRecentAnalysisDoubleClick;
             layout.Controls.Add(_recentAnalysesListBox, 0, 3);
@@ -199,9 +208,10 @@ namespace CostAnalysis.App.UI
                 RowCount = 6,
                 BackColor = _panel
             };
+            _workspaceLayout = layout;
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 144));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
@@ -210,14 +220,13 @@ namespace CostAnalysis.App.UI
             var headingRow = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 2,
+                ColumnCount = 1,
                 RowCount = 1,
                 BackColor = _panel
             };
             headingRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            headingRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
 
-            var heading = CreateMetroLabel()
+            var heading = new MetroLabel
             {
                 Text = "客户成本分析表",
                 ForeColor = _ink,
@@ -226,17 +235,6 @@ namespace CostAnalysis.App.UI
                 TextAlign = ContentAlignment.MiddleLeft
             };
             headingRow.Controls.Add(heading, 0, 0);
-
-            var quickActions = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.RightToLeft,
-                WrapContents = false,
-                BackColor = _panel
-            };
-            AddSmallActionButton(quickActions, "保存分析单", OnSaveAnalysis, true);
-            AddSmallActionButton(quickActions, "清空", OnClearAnalysis, false);
-            headingRow.Controls.Add(quickActions, 1, 0);
             layout.Controls.Add(headingRow, 0, 0);
 
             layout.Controls.Add(BuildHeaderPanel(), 0, 1);
@@ -250,98 +248,42 @@ namespace CostAnalysis.App.UI
             var bar = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 4,
+                ColumnCount = 7,
                 RowCount = 1,
                 BackColor = Color.White,
-                Margin = new Padding(0, 4, 0, 8)
+                Margin = new Padding(0, 8, 0, 6),
+                Padding = new Padding(0)
             };
-            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 19));
-            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 24));
-            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
-            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 21));
+            for (var i = 0; i < 7; i++)
+            {
+                bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 14.28F));
+            }
 
-            var importGroup = CreateCommandGroup("数据导入");
-            AddCommandButton(importGroup, "导入报价", OnImportQuote, true, "导入单个报价单并进入确认页");
-            AddCommandButton(importGroup, "批量预扫", OnBatchScanQuotes, false, "扫描文件夹内多个报价单");
-            bar.Controls.Add(importGroup.Parent, 0, 0);
+            bar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            var detailGroup = CreateCommandGroup("明细操作");
-            AddCommandButton(detailGroup, "新增", OnAddRow, false, "新增一条空白成本明细");
-            AddCommandButton(detailGroup, "删除", OnDeleteSelectedRows, false, "删除已勾选的明细行");
-            AddCommandButton(detailGroup, "阶梯价", OnEditRowPriceTiers, false, "编辑当前明细的阶梯价格");
-            bar.Controls.Add(detailGroup.Parent, 1, 0);
-
-            var costGroup = CreateCommandGroup("成本工具");
-            AddCommandButton(costGroup, "应用规则", OnApplyProcessRules, false, "按工艺规则自动填充空白费用");
-            AddCommandButton(costGroup, "历史参考", OnOpenCostHistoryReference, false, "查看历史成本并套用参考值");
-            AddCommandButton(costGroup, "AI补全", OnAiCompleteCosts, false, "调用 AI 补全空白成本金额");
-            AddCommandButton(costGroup, "MOQ模拟", OnOpenMoqSimulation, false, "模拟阶梯起订量对整单成本的影响");
-            bar.Controls.Add(costGroup.Parent, 2, 0);
-
-            var fileGroup = CreateCommandGroup("文件");
-            AddCommandButton(fileGroup, "保存", OnSaveAnalysis, false, "保存当前成本分析");
-            AddCommandButton(fileGroup, "打开", OnOpenAnalysis, false, "打开历史成本分析");
-            AddCommandButton(fileGroup, "导出", OnExportExcelPlaceholder, false, "导出给客户的 Excel 文件");
-            bar.Controls.Add(fileGroup.Parent, 3, 0);
+            AddCommandButton(bar, "导入报价", OnImportQuote, true, "导入单个报价单并进入确认页");
+            AddCommandButton(bar, "批量扫描", OnBatchScanQuotes, false, "扫描文件夹内多个报价单");
+            AddCommandButton(bar, "新增", OnAddRow, false, "新增一条空白成本明细");
+            AddCommandButton(bar, "删除", OnDeleteSelectedRows, false, "删除已勾选的明细行");
+            AddCommandButton(bar, "保存", OnSaveAnalysis, false, "保存当前成本分析");
+            AddCommandButton(bar, "打开", OnOpenAnalysis, false, "打开历史成本分析");
+            AddCommandButton(bar, "导出", OnExportExcelPlaceholder, false, "导出给客户的 Excel 文件");
 
             return bar;
-        }
-
-        private TableLayoutPanel CreateCommandGroup(string title)
-        {
-            var shell = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                RowCount = 2,
-                ColumnCount = 1,
-                BackColor = Color.FromArgb(250, 250, 252),
-                Padding = new Padding(12, 8, 12, 10),
-                Margin = new Padding(0, 0, 10, 0)
-            };
-            ApplyRoundedRegion(shell, 12);
-            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-            shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-            shell.Controls.Add(CreateMetroLabel()
-            {
-                Dock = DockStyle.Fill,
-                Text = title,
-                ForeColor = _muted,
-                TextAlign = ContentAlignment.MiddleLeft
-            }, 0, 0);
-
-            var buttonGrid = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 2,
-                RowCount = 2,
-                BackColor = Color.Transparent,
-                Margin = new Padding(0)
-            };
-            buttonGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            buttonGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            buttonGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            buttonGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            shell.Controls.Add(buttonGrid, 0, 1);
-            return buttonGrid;
         }
 
         private void AddCommandButton(TableLayoutPanel panel, string text, EventHandler handler, bool primary, string tip)
         {
             var button = CreateMetroButton(text, primary);
             button.Dock = DockStyle.Fill;
-            button.Margin = new Padding(0, 4, 8, 4);
+            button.Margin = new Padding(0, 0, 10, 4);
             button.Click += handler;
             _commandTips.SetToolTip(button, tip);
             var index = panel.Controls.Count;
-            var row = index / 2;
-            if (row >= panel.RowCount)
-            {
-                panel.RowCount++;
-                panel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            }
+            var column = index % panel.ColumnCount;
+            var row = index / panel.ColumnCount;
 
-            panel.Controls.Add(button, index % 2, row);
+            panel.Controls.Add(button, column, row);
         }
 
         private Control BuildHeaderPanel()
@@ -371,7 +313,7 @@ namespace CostAnalysis.App.UI
 
         private void AddHeaderField(TableLayoutPanel panel, int column, string labelText, string controlName)
         {
-            panel.Controls.Add(CreateMetroLabel()
+            panel.Controls.Add(new MetroLabel
             {
                 Text = labelText,
                 ForeColor = _muted,
@@ -461,8 +403,8 @@ namespace CostAnalysis.App.UI
             var shell = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                Height = 320,
-                RowCount = 2,
+                Height = 366,
+                RowCount = 3,
                 ColumnCount = 1,
                 BackColor = Color.White,
                 Padding = new Padding(20, 14, 20, 18),
@@ -470,6 +412,7 @@ namespace CostAnalysis.App.UI
             };
             ApplyRoundedRegion(shell, 14);
             shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
             shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             var header = new TableLayoutPanel
@@ -481,7 +424,7 @@ namespace CostAnalysis.App.UI
             };
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 360));
 
             _detailSelectedCheckBox = new MetroCheckBox
             {
@@ -492,7 +435,7 @@ namespace CostAnalysis.App.UI
             _detailSelectedCheckBox.CheckedChanged += OnDetailSelectedChanged;
             header.Controls.Add(_detailSelectedCheckBox, 0, 0);
 
-            _detailTitleLabel = CreateMetroLabel()
+            _detailTitleLabel = new MetroLabel
             {
                 Dock = DockStyle.Fill,
                 Text = "成本明细",
@@ -502,7 +445,7 @@ namespace CostAnalysis.App.UI
             };
             header.Controls.Add(_detailTitleLabel, 1, 0);
 
-            _detailStatusLabel = CreateMetroLabel()
+            _detailStatusLabel = new MetroLabel
             {
                 Dock = DockStyle.Fill,
                 Text = "请选择或新增一条明细",
@@ -511,6 +454,7 @@ namespace CostAnalysis.App.UI
             };
             header.Controls.Add(_detailStatusLabel, 2, 0);
             shell.Controls.Add(header, 0, 0);
+            shell.Controls.Add(BuildDetailToolBar(), 0, 1);
 
             var fields = new TableLayoutPanel
             {
@@ -547,8 +491,53 @@ namespace CostAnalysis.App.UI
             AddDetailField(fields, 2, 6, "总价", "TotalPrice");
             AddDetailField(fields, 3, 6, "状态", "ValidationStatus");
 
-            shell.Controls.Add(fields, 0, 1);
+            shell.Controls.Add(fields, 0, 2);
             return shell;
+        }
+
+        private Control BuildDetailToolBar()
+        {
+            var bar = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 6,
+                RowCount = 1,
+                BackColor = Color.White,
+                Margin = new Padding(0, 2, 0, 4)
+            };
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            for (var i = 0; i < 5; i++)
+            {
+                bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
+            }
+            bar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var label = new MetroLabel
+            {
+                Dock = DockStyle.Fill,
+                Text = "当前明细工具",
+                ForeColor = _muted,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            bar.Controls.Add(label, 0, 0);
+
+            AddDetailToolButton(bar, "阶梯价", OnEditRowPriceTiers, "编辑当前明细的阶梯价格");
+            AddDetailToolButton(bar, "规则", OnApplyCurrentProcessRules, "按工艺规则自动填充当前明细空白费用");
+            AddDetailToolButton(bar, "历史", OnOpenCostHistoryReference, "查看历史成本并套用参考值");
+            AddDetailToolButton(bar, "AI补全", OnAiCompleteCurrentCosts, "调用 AI 补全当前明细空白成本金额");
+            AddDetailToolButton(bar, "MOQ", OnOpenMoqSimulation, "模拟阶梯起订量对整单成本的影响");
+            return bar;
+        }
+
+        private void AddDetailToolButton(TableLayoutPanel panel, string text, EventHandler handler, string tip)
+        {
+            var button = CreateMetroButton(text, false);
+            button.Dock = DockStyle.Fill;
+            button.Margin = new Padding(6, 4, 0, 4);
+            button.Click += handler;
+            _commandTips.SetToolTip(button, tip);
+            var index = panel.Controls.Count;
+            panel.Controls.Add(button, index, 0);
         }
 
         private Control BuildDetailCardsArea()
@@ -559,47 +548,27 @@ namespace CostAnalysis.App.UI
                 RowCount = 2,
                 ColumnCount = 1,
                 BackColor = Color.White,
-                Margin = new Padding(0, 8, 0, 0)
+                Margin = new Padding(0, 4, 0, 0)
             };
-            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
             shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            var titleRow = new TableLayoutPanel
+            var title = new MetroLabel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 2,
-                RowCount = 1,
-                BackColor = Color.White
-            };
-            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
-            titleRow.Controls.Add(new Label
-            {
-                Dock = DockStyle.Fill,
-                Text = "明细表单    卡片式录入，支持展开/收起",
+                Text = "明细表单",
                 ForeColor = _ink,
                 Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold),
                 TextAlign = ContentAlignment.MiddleLeft
-            }, 0, 0);
-
-            var actionPanel = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.RightToLeft,
-                WrapContents = false,
-                BackColor = Color.White
             };
-            AddSmallActionButton(actionPanel, "新增明细", OnAddRow, true);
-            AddSmallActionButton(actionPanel, "全部收起", (_, __) => CollapseAllDetailCards(), false);
-            AddSmallActionButton(actionPanel, "展开首条", (_, __) => ExpandFirstDetailCard(), false);
-            titleRow.Controls.Add(actionPanel, 1, 0);
-            shell.Controls.Add(titleRow, 0, 0);
+            shell.Controls.Add(title, 0, 0);
 
-            _detailCardsPanel = new Panel
+            _detailCardsPanel = new MetroPanel
             {
                 Dock = DockStyle.Fill,
                 AutoScroll = true,
                 BackColor = Color.White,
+                UseCustomBackColor = true,
                 Padding = new Padding(0, 0, 8, 8)
             };
             _detailCardsPanel.SizeChanged += (_, __) => ResizeDetailCards();
@@ -607,19 +576,19 @@ namespace CostAnalysis.App.UI
             return shell;
         }
 
-        private void AddSmallActionButton(FlowLayoutPanel panel, string text, EventHandler handler, bool primary)
+        private void AddSmallActionButton(TableLayoutPanel panel, string text, EventHandler handler, bool primary)
         {
             var button = CreateMetroButton(text, primary);
-            button.Width = GetAdaptiveButtonWidth(text, primary ? 108 : 94, 132);
-            button.Height = 32;
-            button.Margin = new Padding(8, 5, 0, 5);
+            button.Dock = DockStyle.Fill;
+            button.Margin = new Padding(8, 6, 0, 6);
             button.Click += handler;
-            panel.Controls.Add(button);
+            var index = panel.Controls.Count;
+            panel.Controls.Add(button, index, 0);
         }
 
         private void AddDetailField(TableLayoutPanel panel, int column, int row, string label, string columnName)
         {
-            panel.Controls.Add(new Label
+            panel.Controls.Add(new MetroLabel
             {
                 Dock = DockStyle.Fill,
                 Text = label,
@@ -858,7 +827,7 @@ namespace CostAnalysis.App.UI
                 return;
             }
 
-            var existingTiers = row.Tag as System.Collections.Generic.List<PriceTier>;
+            var existingTiers = GetRowPriceTiers(row);
             using (var form = new PriceTiersForm(existingTiers))
             {
                 if (form.ShowDialog(this) != DialogResult.OK)
@@ -866,7 +835,7 @@ namespace CostAnalysis.App.UI
                     return;
                 }
 
-                row.Tag = form.PriceTiers;
+                SetRowPriceTiers(row, form.PriceTiers);
                 RecalculateRows();
                 row.Cells["PurchaseUnitPrice"].Style.BackColor = Color.FromArgb(232, 244, 255);
                 row.Cells["PurchaseUnitPrice"].ToolTipText = "采购单价已按阶梯价格重新匹配";
@@ -914,7 +883,7 @@ namespace CostAnalysis.App.UI
                     continue;
                 }
 
-                var tiers = row.Tag as List<PriceTier>;
+                var tiers = GetRowPriceTiers(row);
                 if (tiers == null || tiers.Count == 0)
                 {
                     continue;
@@ -1019,6 +988,11 @@ namespace CostAnalysis.App.UI
         private static System.Collections.Generic.List<PriceTier> ClonePriceTiers(System.Collections.Generic.List<PriceTier> source)
         {
             var result = new System.Collections.Generic.List<PriceTier>();
+            if (source == null)
+            {
+                return result;
+            }
+
             foreach (var tier in source)
             {
                 result.Add(new PriceTier
@@ -1031,6 +1005,104 @@ namespace CostAnalysis.App.UI
             }
 
             return result;
+        }
+
+        private static System.Collections.Generic.List<PriceTier> GetRowPriceTiers(DataGridViewRow row)
+        {
+            var tiers = row == null ? null : row.Tag as System.Collections.Generic.List<PriceTier>;
+            NormalizeTierQuantities(tiers);
+            return tiers;
+        }
+
+        private static void SetRowPriceTiers(DataGridViewRow row, System.Collections.Generic.List<PriceTier> tiers)
+        {
+            if (row == null)
+            {
+                return;
+            }
+
+            row.Tag = ClonePriceTiers(tiers);
+            NormalizeTierQuantities(row.Tag as System.Collections.Generic.List<PriceTier>);
+        }
+
+        private static void NormalizeTierQuantities(System.Collections.Generic.List<PriceTier> tiers)
+        {
+            if (tiers == null)
+            {
+                return;
+            }
+
+            foreach (var tier in tiers)
+            {
+                if (tier == null || (tier.MinQuantity.HasValue && tier.MaxQuantity.HasValue))
+                {
+                    continue;
+                }
+
+                int? min = tier.MinQuantity;
+                int? max = tier.MaxQuantity;
+                FillQuantityRangeFromTierLabel(tier.Label, ref min, ref max);
+                tier.MinQuantity = min;
+                tier.MaxQuantity = max;
+            }
+        }
+
+        private static void FillQuantityRangeFromTierLabel(string label, ref int? minQuantity, ref int? maxQuantity)
+        {
+            var text = (label ?? string.Empty)
+                .Trim()
+                .Replace("－", "-")
+                .Replace("—", "-")
+                .Replace("–", "-")
+                .Replace("~", "-")
+                .Replace("～", "-")
+                .Replace("以上", "+");
+
+            var parts = text.Split('-');
+            if (parts.Length >= 2)
+            {
+                int min;
+                int max;
+                if (!minQuantity.HasValue && TryParseLeadingInt(parts[0], out min))
+                {
+                    minQuantity = min;
+                }
+
+                if (!maxQuantity.HasValue && TryParseLeadingInt(parts[1], out max))
+                {
+                    maxQuantity = max;
+                }
+
+                return;
+            }
+
+            int single;
+            if (!minQuantity.HasValue && TryParseLeadingInt(text, out single))
+            {
+                minQuantity = single;
+            }
+        }
+
+        private static bool TryParseLeadingInt(string value, out int result)
+        {
+            result = 0;
+            var text = (value ?? string.Empty).Trim();
+            var digits = string.Empty;
+            foreach (var ch in text)
+            {
+                if (char.IsDigit(ch))
+                {
+                    digits += ch;
+                    continue;
+                }
+
+                if (digits.Length > 0)
+                {
+                    break;
+                }
+            }
+
+            return digits.Length > 0 && int.TryParse(digits, out result);
         }
 
         private void OnAiCompleteCosts(object sender, EventArgs e)
@@ -1053,6 +1125,29 @@ namespace CostAnalysis.App.UI
                 return;
             }
 
+            RunAiCostCompletion(rows);
+        }
+
+        private void OnAiCompleteCurrentCosts(object sender, EventArgs e)
+        {
+            var row = GetCurrentDataRow();
+            if (row == null)
+            {
+                MessageBox.Show(this, "请先选择一条明细。", "AI补全成本", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (!RowNeedsCostCompletion(row))
+            {
+                MessageBox.Show(this, "当前明细没有需要 AI 补全的空白费用。", "AI补全成本", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            RunAiCostCompletion(new List<DataGridViewRow> { row });
+        }
+
+        private void RunAiCostCompletion(List<DataGridViewRow> rows)
+        {
             var settings = new AiSettingsRepository().Get();
             if (!settings.IsEnabled)
             {
@@ -1081,6 +1176,7 @@ namespace CostAnalysis.App.UI
                 var result = new DeepSeekClient().SuggestCosts(settings, inputs);
                 var changed = ApplyAiCostCompletionSuggestions(rows, result, inputs);
                 RecalculateRows();
+                LoadCurrentRowToDetailCard();
                 _statusLabel.Text = "AI 成本补全完成，更新费用单元格 " + changed + " 个。";
                 MessageBox.Show(this, "AI 成本补全完成，更新费用单元格 " + changed + " 个。请继续人工确认。", "AI补全成本", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
@@ -1308,6 +1404,11 @@ namespace CostAnalysis.App.UI
 
         private void OnGridCellValueChanged(object sender, DataGridViewCellEventArgs e)
         {
+            if (_updatingGridFromDetail)
+            {
+                return;
+            }
+
             if (e.RowIndex < 0 || e.ColumnIndex < 0)
             {
                 return;
@@ -1382,10 +1483,43 @@ namespace CostAnalysis.App.UI
                 return;
             }
 
-            row.Cells[columnName].Value = textBox.Text;
-            RecalculateRows();
-            LoadCurrentRowToDetailCard();
-            RefreshDetailCards();
+            _updatingGridFromDetail = true;
+            try
+            {
+                row.Cells[columnName].Value = textBox.Text;
+                RecalculateRows();
+                RefreshCalculatedDetailFields(row, textBox);
+            }
+            finally
+            {
+                _updatingGridFromDetail = false;
+            }
+        }
+
+        private void RefreshCalculatedDetailFields(DataGridViewRow row, Control activeControl)
+        {
+            _syncingDetailCard = true;
+            try
+            {
+                UpdateDetailFieldFromRow(row, "PurchaseUnitPrice", activeControl);
+                UpdateDetailFieldFromRow(row, "TotalPrice", activeControl);
+                UpdateDetailFieldFromRow(row, "ValidationStatus", activeControl);
+            }
+            finally
+            {
+                _syncingDetailCard = false;
+            }
+        }
+
+        private void UpdateDetailFieldFromRow(DataGridViewRow row, string columnName, Control activeControl)
+        {
+            MetroTextBox textBox;
+            if (!_detailFields.TryGetValue(columnName, out textBox) || ReferenceEquals(textBox, activeControl))
+            {
+                return;
+            }
+
+            textBox.Text = SafeCell(row, columnName);
         }
 
         private void RefreshDetailCards()
@@ -1470,7 +1604,7 @@ namespace CostAnalysis.App.UI
             card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40));
             card.Click += OnCollapsedCardClick;
 
-            var selector = new CheckBox
+            var selector = new MetroCheckBox
             {
                 Dock = DockStyle.Fill,
                 Checked = IsRowChecked(row),
@@ -1479,7 +1613,7 @@ namespace CostAnalysis.App.UI
             selector.CheckedChanged += OnCollapsedCardCheckedChanged;
             card.Controls.Add(selector, 0, 0);
 
-            card.Controls.Add(new Label
+            card.Controls.Add(new MetroLabel
             {
                 Dock = DockStyle.Fill,
                 Text = "成本" + SafeCell(row, "No"),
@@ -1488,7 +1622,7 @@ namespace CostAnalysis.App.UI
                 TextAlign = ContentAlignment.MiddleLeft
             }, 1, 0);
 
-            card.Controls.Add(new Label
+            card.Controls.Add(new MetroLabel
             {
                 Dock = DockStyle.Fill,
                 Text = BuildCollapsedCardSummary(row),
@@ -1496,7 +1630,7 @@ namespace CostAnalysis.App.UI
                 TextAlign = ContentAlignment.MiddleLeft
             }, 2, 0);
 
-            card.Controls.Add(new Label
+            card.Controls.Add(new MetroLabel
             {
                 Dock = DockStyle.Fill,
                 Text = "⌄",
@@ -1525,11 +1659,11 @@ namespace CostAnalysis.App.UI
 
         private Control BuildEmptyDetailCard()
         {
-            return new Label
+            return new MetroLabel
             {
                 Height = 96,
                 Dock = DockStyle.Top,
-                Text = "暂无明细。点击上方“新增明细”或“导入报价”。",
+                Text = "暂无明细。点击上方“新增”或“导入报价”。",
                 ForeColor = _muted,
                 TextAlign = ContentAlignment.MiddleCenter,
                 BackColor = Color.FromArgb(250, 250, 252)
@@ -1845,6 +1979,21 @@ namespace CostAnalysis.App.UI
             _statusLabel.Text = "已应用工艺规则，更新费用单元格 " + changed + " 个。";
         }
 
+        private void OnApplyCurrentProcessRules(object sender, EventArgs e)
+        {
+            var row = GetCurrentDataRow();
+            if (row == null)
+            {
+                MessageBox.Show(this, "请先选择一条明细。", "应用规则", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var changed = ApplyProcessRulesToRows(new List<DataGridViewRow> { row });
+            RecalculateRows();
+            LoadCurrentRowToDetailCard();
+            _statusLabel.Text = "已对当前明细应用工艺规则，更新费用单元格 " + changed + " 个。";
+        }
+
         private int ApplyProcessRulesToRows(System.Collections.Generic.List<DataGridViewRow> rows)
         {
             var changed = 0;
@@ -1994,7 +2143,7 @@ namespace CostAnalysis.App.UI
                 _recentAnalysesListBox.Items.Clear();
                 foreach (var item in new CostAnalysisRepository().GetRecentAnalyses())
                 {
-                    _recentAnalysesListBox.Items.Add(item);
+                    _recentAnalysesListBox.Items.Add(new ListViewItem(item.DisplayText) { Tag = item });
                 }
             }
             catch (Exception ex)
@@ -2009,7 +2158,12 @@ namespace CostAnalysis.App.UI
 
         private void OnRecentAnalysisDoubleClick(object sender, EventArgs e)
         {
-            var selected = _recentAnalysesListBox.SelectedItem as CostAnalysisSummary;
+            if (_recentAnalysesListBox.SelectedItems.Count == 0)
+            {
+                return;
+            }
+
+            var selected = _recentAnalysesListBox.SelectedItems[0].Tag as CostAnalysisSummary;
             if (selected == null)
             {
                 return;
@@ -2044,14 +2198,24 @@ namespace CostAnalysis.App.UI
 
                 var quantity = ReadDecimal(row.Cells["TotalQuantity"].Value);
                 var unitPrice = ReadDecimal(row.Cells["PurchaseUnitPrice"].Value);
-                var tiers = row.Tag as System.Collections.Generic.List<PriceTier>;
-                if (quantity.HasValue && tiers != null)
+                var costTotal = CalculateCostComponentTotal(row);
+                if (costTotal.HasValue)
                 {
-                    var matched = ExcelQuoteImportService.MatchTier(tiers, quantity.Value);
-                    if (matched != null && matched.UnitPrice.HasValue)
+                    unitPrice = costTotal.Value;
+                    row.Cells["PurchaseUnitPrice"].Value = costTotal.Value.ToString("0.####");
+                    row.Cells["PurchaseUnitPrice"].ToolTipText = "采购单价已按材料费+印刷费+后工序费+其他费用合计";
+                }
+                else
+                {
+                    var tiers = GetRowPriceTiers(row);
+                    if (quantity.HasValue && tiers != null)
                     {
-                        unitPrice = matched.UnitPrice;
-                        row.Cells["PurchaseUnitPrice"].Value = unitPrice.Value.ToString("0.####");
+                        var matched = ExcelQuoteImportService.MatchTier(tiers, quantity.Value);
+                        if (matched != null && matched.UnitPrice.HasValue)
+                        {
+                            unitPrice = matched.UnitPrice;
+                            row.Cells["PurchaseUnitPrice"].Value = unitPrice.Value.ToString("0.####");
+                        }
                     }
                 }
 
@@ -2062,6 +2226,23 @@ namespace CostAnalysis.App.UI
             }
 
             ValidateGrid();
+        }
+
+        private decimal? CalculateCostComponentTotal(DataGridViewRow row)
+        {
+            var materialCost = ReadDecimal(row.Cells["MaterialCost"].Value);
+            var printingCost = ReadDecimal(row.Cells["PrintingCost"].Value);
+            var postProcessCost = ReadDecimal(row.Cells["PostProcessCost"].Value);
+            var otherCost = ReadDecimal(row.Cells["OtherCost"].Value);
+            if (!materialCost.HasValue && !printingCost.HasValue && !postProcessCost.HasValue && !otherCost.HasValue)
+            {
+                return null;
+            }
+
+            return materialCost.GetValueOrDefault() +
+                   printingCost.GetValueOrDefault() +
+                   postProcessCost.GetValueOrDefault() +
+                   otherCost.GetValueOrDefault();
         }
 
         private int ValidateGrid()
@@ -2171,7 +2352,7 @@ namespace CostAnalysis.App.UI
             {
                 var rowIndex = _grid.Rows.Add();
                 var row = _grid.Rows[rowIndex];
-                row.Tag = item.PriceTiers;
+                SetRowPriceTiers(row, item.PriceTiers);
                 row.Cells["Selected"].Value = false;
                 row.Cells["No"].Value = rowIndex + 1;
                 row.Cells["MaterialCode"].Value = item.MaterialCode;
@@ -2270,7 +2451,7 @@ namespace CostAnalysis.App.UI
                 row.Cells["TotalPrice"].Value = FormatDecimal(item.TotalPrice);
                 if (item.PriceTiers != null && item.PriceTiers.Count > 0)
                 {
-                    row.Tag = item.PriceTiers;
+                    SetRowPriceTiers(row, item.PriceTiers);
                     row.Cells["PurchaseUnitPrice"].ToolTipText = "已恢复保存的阶梯价格";
                 }
             }
@@ -2399,46 +2580,18 @@ namespace CostAnalysis.App.UI
             return value.HasValue ? value.Value.ToString("0.####") : string.Empty;
         }
 
-        private void AddMenuButton(FlowLayoutPanel panel, string text, EventHandler handler, bool active = false)
+        private void AddMenuButton(TableLayoutPanel panel, string text, EventHandler handler, bool active = false)
         {
             var button = CreateMetroButton(text, active);
-            button.Width = 178;
-            button.Height = 42;
+            button.Dock = DockStyle.Fill;
             button.TextAlign = ContentAlignment.MiddleLeft;
             button.Margin = new Padding(0, 0, 0, 8);
             if (handler != null)
             {
                 button.Click += handler;
             }
-            panel.Controls.Add(button);
-        }
-
-        private void AddPrimaryButton(FlowLayoutPanel panel, string text, EventHandler handler)
-        {
-            var button = CreateToolbarButton(text, handler);
-            button.BackColor = _blue;
-            button.ForeColor = Color.White;
-            button.FlatAppearance.BorderColor = _blue;
-            panel.Controls.Add(button);
-        }
-
-        private void AddSecondaryButton(FlowLayoutPanel panel, string text, EventHandler handler)
-        {
-            var button = CreateToolbarButton(text, handler);
-            button.BackColor = Color.White;
-            button.ForeColor = _blue;
-            button.FlatAppearance.BorderColor = Color.FromArgb(210, 210, 215);
-            panel.Controls.Add(button);
-        }
-
-        private Button CreateToolbarButton(string text, EventHandler handler)
-        {
-            var button = CreateMetroButton(text, false);
-            button.Width = 110;
-            button.Height = 34;
-            button.Margin = new Padding(0, 4, 10, 4);
-            button.Click += handler;
-            return button;
+            var row = panel.Controls.Count;
+            panel.Controls.Add(button, 0, row);
         }
 
         private static void AddColumn(DataGridView grid, string name, string headerText)
@@ -2562,12 +2715,21 @@ namespace CostAnalysis.App.UI
         private static MetroTextBox FindHeaderTextBox(Control root, string name)
         {
             var matches = root.Controls.Find(name, true);
+            foreach (var match in matches)
+            {
+                var textBox = match as MetroTextBox;
+                if (textBox != null)
+                {
+                    return textBox;
+                }
+            }
+
             if (matches.Length == 0)
             {
                 throw new InvalidOperationException("找不到输入框：" + name);
             }
 
-            return (MetroTextBox)matches[0];
+            throw new InvalidOperationException("找到的控件不是 MetroTextBox：" + name + "，实际类型：" + matches[0].GetType().FullName);
         }
 
         private static bool DirectoryExists(string path)

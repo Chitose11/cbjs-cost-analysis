@@ -141,6 +141,11 @@ namespace CostAnalysis.App.UI
                     return;
                 }
 
+                if ((!minQuantity.HasValue || !maxQuantity.HasValue) && !string.IsNullOrWhiteSpace(label))
+                {
+                    FillQuantityRangeFromLabel(label, ref minQuantity, ref maxQuantity);
+                }
+
                 if (!TryParseOptionalDecimal(unitPriceText, out unitPrice) || !unitPrice.HasValue)
                 {
                     ShowCellError(row, "UnitPrice", "单价必须是数字。");
@@ -187,6 +192,64 @@ namespace CostAnalysis.App.UI
             }
 
             return minQuantity.HasValue ? minQuantity.Value.ToString(CultureInfo.InvariantCulture) : string.Empty;
+        }
+
+        private static void FillQuantityRangeFromLabel(string label, ref int? minQuantity, ref int? maxQuantity)
+        {
+            var text = (label ?? string.Empty)
+                .Trim()
+                .Replace("－", "-")
+                .Replace("—", "-")
+                .Replace("–", "-")
+                .Replace("~", "-")
+                .Replace("～", "-")
+                .Replace("以上", "+");
+
+            var parts = text.Split('-');
+            if (parts.Length >= 2)
+            {
+                int min;
+                int max;
+                if (!minQuantity.HasValue && TryParseLeadingInt(parts[0], out min))
+                {
+                    minQuantity = min;
+                }
+
+                if (!maxQuantity.HasValue && TryParseLeadingInt(parts[1], out max))
+                {
+                    maxQuantity = max;
+                }
+
+                return;
+            }
+
+            int single;
+            if (!minQuantity.HasValue && TryParseLeadingInt(text, out single))
+            {
+                minQuantity = single;
+            }
+        }
+
+        private static bool TryParseLeadingInt(string value, out int result)
+        {
+            result = 0;
+            var text = (value ?? string.Empty).Trim();
+            var digits = string.Empty;
+            foreach (var ch in text)
+            {
+                if (char.IsDigit(ch))
+                {
+                    digits += ch;
+                    continue;
+                }
+
+                if (digits.Length > 0)
+                {
+                    break;
+                }
+            }
+
+            return digits.Length > 0 && int.TryParse(digits, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
         }
 
         private static bool TryParseOptionalInt(string value, out int? result)

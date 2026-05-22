@@ -16,16 +16,18 @@ namespace CostAnalysis.App.UI
     internal sealed class QuoteImportPreviewForm : MetroForm
     {
         private readonly QuoteImportPreview _preview;
-        private readonly DataGridView _grid;
-        private readonly DataGridView _rawGrid;
-        private readonly Label _summaryLabel;
-        private readonly Button _editPriceTiersButton;
-        private readonly Button _aiAssistButton;
-        private readonly Button _aiPreviewButton;
-        private readonly Button _undoAiButton;
-        private readonly Button _aiResultButton;
-        private readonly Button _pasteTextButton;
-        private readonly Button _warningSummaryButton;
+        private readonly MetroGrid _grid;
+        private readonly MetroGrid _rawGrid;
+        private readonly MetroLabel _summaryLabel;
+        private readonly MetroButton _editPriceTiersButton;
+        private readonly MetroButton _aiAssistButton;
+        private readonly MetroButton _aiPreviewButton;
+        private readonly MetroButton _undoAiButton;
+        private readonly MetroButton _aiResultButton;
+        private readonly MetroButton _aiDetailsButton;
+        private readonly MetroButton _pasteTextButton;
+        private readonly MetroButton _warningSummaryButton;
+        private readonly ContextMenuStrip _aiDetailsMenu;
         private readonly PriceWarningService _priceWarningService;
         private string _lastAiRawContent;
         private PreviewSnapshot _lastPreviewSnapshot;
@@ -64,7 +66,7 @@ namespace CostAnalysis.App.UI
             };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
             Controls.Add(root);
 
             _summaryLabel = BuildSummaryLabel();
@@ -72,73 +74,50 @@ namespace CostAnalysis.App.UI
 
             _grid = BuildGrid();
             _rawGrid = BuildRawGrid();
+            _editPriceTiersButton = CreateMetroActionButton("阶梯价", false, 86);
+            _editPriceTiersButton.Click += OnEditPriceTiers;
             root.Controls.Add(BuildPreviewLayout(), 0, 1);
 
-            var buttons = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.RightToLeft
-            };
-            root.Controls.Add(buttons, 0, 2);
-
-            var confirm = CreateMetroActionButton("确认加入", true, 104);
-            confirm.Click += (_, __) => Confirm();
-            buttons.Controls.Add(confirm);
-
-            var cancel = CreateMetroActionButton("取消", false, 86);
-            cancel.Click += (_, __) => DialogResult = DialogResult.Cancel;
-            buttons.Controls.Add(cancel);
-
-            _editPriceTiersButton = CreateMetroActionButton("编辑阶梯价", false, 118);
-            _editPriceTiersButton.Click += OnEditPriceTiers;
-            buttons.Controls.Add(_editPriceTiersButton);
-
-            _aiAssistButton = CreateMetroActionButton("AI辅助识别", false, 118);
+            _aiAssistButton = CreateMetroActionButton("AI识别", false, 92);
             _aiAssistButton.Click += OnAiAssist;
-            buttons.Controls.Add(_aiAssistButton);
 
-            _pasteTextButton = CreateMetroActionButton("粘贴文本", false, 104);
+            _pasteTextButton = CreateMetroActionButton("从文本识别", false, 108);
             _pasteTextButton.Click += OnPasteRawText;
-            buttons.Controls.Add(_pasteTextButton);
 
-            _aiPreviewButton = CreateMetroActionButton("AI请求预览", false, 118);
-            _warningSummaryButton = CreateMetroActionButton("预警汇总", false, 104);
+            _warningSummaryButton = CreateMetroActionButton("价格预警", false, 96);
             _warningSummaryButton.Click += OnShowWarningSummary;
-            buttons.Controls.Add(_warningSummaryButton);
 
+            _aiPreviewButton = CreateMetroActionButton("查看AI请求", false, 118);
             _aiPreviewButton.Click += OnAiRequestPreview;
-            buttons.Controls.Add(_aiPreviewButton);
 
-            _aiResultButton = CreateMetroActionButton("查看AI结果", false, 118);
+            _aiResultButton = CreateMetroActionButton("AI结果", false, 92);
             _aiResultButton.Enabled = false;
             _aiResultButton.Click += OnViewAiResult;
-            buttons.Controls.Add(_aiResultButton);
 
-            _undoAiButton = CreateMetroActionButton("撤销AI改动", false, 118);
+            _undoAiButton = CreateMetroActionButton("撤销AI", false, 92);
             _undoAiButton.Enabled = false;
             _undoAiButton.Click += OnUndoAiChanges;
-            buttons.Controls.Add(_undoAiButton);
 
-            NormalizeActionButtons(buttons);
+            _aiDetailsMenu = BuildAiDetailsMenu();
+            _aiDetailsButton = CreateMetroActionButton("AI详情", false, 88);
+            _aiDetailsButton.Click += (_, __) =>
+            {
+                UpdateAiDetailsMenuState();
+                _aiDetailsMenu.Show(_aiDetailsButton, new Point(0, _aiDetailsButton.Height));
+            };
+
+            root.Controls.Add(BuildFooterActions(), 0, 2);
             LoadItems();
             UpdateImportSelectionSummary();
             LoadRawPreview();
         }
 
-        private static void NormalizeActionButtons(FlowLayoutPanel panel)
+        private static void AddActionButton(TableLayoutPanel panel, MetroButton button)
         {
-            foreach (Control control in panel.Controls)
-            {
-                var button = control as Button;
-                if (button == null)
-                {
-                    continue;
-                }
-
-                button.AutoEllipsis = true;
-                button.Height = 34;
-                button.Width = Math.Max(button.Width + 12, Math.Min(136, TextRenderer.MeasureText(button.Text ?? string.Empty, button.Font).Width + 30));
-            }
+            button.Dock = DockStyle.Fill;
+            button.Margin = new Padding(6, 6, 0, 6);
+            var index = panel.Controls.Count;
+            panel.Controls.Add(button, index, 0);
         }
 
         private static MetroButton CreateMetroActionButton(string text, bool primary, int minWidth)
@@ -146,21 +125,98 @@ namespace CostAnalysis.App.UI
             return new MetroButton
             {
                 Text = text,
-                Width = minWidth,
-                Height = 34,
                 Style = primary ? MetroColorStyle.Blue : MetroColorStyle.Silver,
                 Theme = MetroThemeStyle.Light,
                 UseSelectable = true,
                 Highlight = primary,
                 DisplayFocus = true,
                 FontSize = MetroButtonSize.Medium,
-                Margin = new Padding(8, 5, 0, 5)
+                MinimumSize = new Size(minWidth, 34)
             };
         }
 
-        private Label BuildSummaryLabel()
+        private Control BuildFooterActions()
         {
-            return new Label
+            var footer = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0, 6, 0, 0)
+            };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 268));
+            footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var secondary = new TableLayoutPanel
+            {
+                Dock = DockStyle.Left,
+                ColumnCount = 4,
+                RowCount = 1,
+                Width = 458,
+                Margin = new Padding(0)
+            };
+            for (var i = 0; i < 4; i++)
+            {
+                secondary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+            }
+            secondary.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            AddActionButton(secondary, _aiAssistButton);
+            AddActionButton(secondary, _pasteTextButton);
+            AddActionButton(secondary, _warningSummaryButton);
+            AddActionButton(secondary, _aiDetailsButton);
+
+            var primary = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0)
+            };
+            primary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
+            primary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
+            primary.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var cancel = CreateMetroActionButton("取消导入", false, 96);
+            cancel.Click += (_, __) => DialogResult = DialogResult.Cancel;
+            AddActionButton(primary, cancel);
+
+            var confirm = CreateMetroActionButton("加入成本表", true, 112);
+            confirm.Click += (_, __) => Confirm();
+            AddActionButton(primary, confirm);
+
+            footer.Controls.Add(secondary, 0, 0);
+            footer.Controls.Add(primary, 1, 0);
+            return footer;
+        }
+
+        private ContextMenuStrip BuildAiDetailsMenu()
+        {
+            var menu = new ContextMenuStrip
+            {
+                ShowImageMargin = false,
+                Font = new Font("Microsoft YaHei UI", 9F)
+            };
+            menu.Items.Add("查看AI请求", null, OnAiRequestPreview);
+            menu.Items.Add("AI结果", null, OnViewAiResult);
+            menu.Items.Add("撤销AI", null, OnUndoAiChanges);
+            return menu;
+        }
+
+        private void UpdateAiDetailsMenuState()
+        {
+            if (_aiDetailsMenu.Items.Count < 3)
+            {
+                return;
+            }
+
+            _aiDetailsMenu.Items[1].Enabled = !string.IsNullOrWhiteSpace(_lastAiRawContent);
+            _aiDetailsMenu.Items[2].Enabled = HasAiChanges();
+        }
+
+        private MetroLabel BuildSummaryLabel()
+        {
+            return new MetroLabel
             {
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -172,7 +228,7 @@ namespace CostAnalysis.App.UI
         private string BuildSummaryText()
         {
             return string.Format(
-                "供应商：{0}\r\nSheet：{1}    模板：{2}    表头行：{3}    数量行：{4}    数据起始行：{5}    物料：{6} 条",
+                "供应商：{0}\r\n识别结果：Sheet={1}    模板={2}    表头行={3}    数量行={4}    数据起始行={5}    物料={6} 条",
                 ShortText(_preview.Supplier, 34),
                 ShortText(_preview.SheetName, 18),
                 ShortText(_preview.TemplateType, 42),
@@ -188,9 +244,9 @@ namespace CostAnalysis.App.UI
             return text.Length <= maxLength ? text : text.Substring(0, Math.Max(0, maxLength - 1)) + "…";
         }
 
-        private DataGridView BuildGrid()
+        private MetroGrid BuildGrid()
         {
-            var grid = new DataGridView
+            var grid = new MetroGrid
             {
                 Dock = DockStyle.Fill,
                 AllowUserToAddRows = false,
@@ -208,6 +264,8 @@ namespace CostAnalysis.App.UI
                 },
                 RowTemplate = { Height = 30 }
             };
+            grid.Style = MetroColorStyle.Blue;
+            grid.Theme = MetroThemeStyle.Light;
             grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
             grid.ColumnHeadersHeight = 34;
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
@@ -247,7 +305,7 @@ namespace CostAnalysis.App.UI
             split.SizeChanged += (_, __) => SetPreviewSplitterDistance(split);
 
             split.Panel1.Controls.Add(BuildSectionPanel("原始文件预览", _rawGrid));
-            split.Panel2.Controls.Add(BuildSectionPanel("识别结果（可直接修正字段）", _grid));
+            split.Panel2.Controls.Add(BuildSectionPanel("识别结果（可直接修正字段）", _grid, _editPriceTiersButton));
             return split;
         }
 
@@ -268,7 +326,7 @@ namespace CostAnalysis.App.UI
             }
         }
 
-        private static Control BuildSectionPanel(string title, Control content)
+        private static Control BuildSectionPanel(string title, Control content, Control action = null)
         {
             var panel = new TableLayoutPanel
             {
@@ -279,7 +337,19 @@ namespace CostAnalysis.App.UI
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            var label = new Label
+            var header = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                BackColor = Color.White,
+                Margin = new Padding(0)
+            };
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, action == null ? 0 : 98));
+            header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var label = new MetroLabel
             {
                 Dock = DockStyle.Fill,
                 Text = title,
@@ -288,16 +358,23 @@ namespace CostAnalysis.App.UI
                 ForeColor = Color.FromArgb(80, 80, 85),
                 BackColor = Color.White
             };
-            panel.Controls.Add(label, 0, 0);
+            header.Controls.Add(label, 0, 0);
+            if (action != null)
+            {
+                action.Dock = DockStyle.Fill;
+                action.Margin = new Padding(6, 0, 0, 4);
+                header.Controls.Add(action, 1, 0);
+            }
+            panel.Controls.Add(header, 0, 0);
 
             content.Dock = DockStyle.Fill;
             panel.Controls.Add(content, 0, 1);
             return panel;
         }
 
-        private DataGridView BuildRawGrid()
+        private MetroGrid BuildRawGrid()
         {
-            return new DataGridView
+            var grid = new MetroGrid
             {
                 Dock = DockStyle.Fill,
                 AllowUserToAddRows = false,
@@ -308,8 +385,11 @@ namespace CostAnalysis.App.UI
                 ReadOnly = true,
                 RowHeadersVisible = true,
                 RowHeadersWidth = 54,
-                SelectionMode = DataGridViewSelectionMode.CellSelect
+                SelectionMode = DataGridViewSelectionMode.CellSelect,
+                Style = MetroColorStyle.Blue,
+                Theme = MetroThemeStyle.Light
             };
+            return grid;
         }
 
         private void LoadItems()
@@ -457,12 +537,12 @@ namespace CostAnalysis.App.UI
 
             if (lines.Count == 0)
             {
-                MessageBox.Show(this, "当前导入明细没有发现价格预警。", "预警汇总", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "当前导入明细没有发现价格预警。", "价格预警", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             var message = "红色预警：" + red + " 条；黄色预警：" + yellow + " 条\r\n\r\n" + string.Join("\r\n", lines.ToArray());
-            MessageBox.Show(this, message, "预警汇总", MessageBoxButtons.OK, red > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+            MessageBox.Show(this, message, "价格预警", MessageBoxButtons.OK, red > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
         }
 
         private static string SafeText(params string[] values)
@@ -636,7 +716,8 @@ namespace CostAnalysis.App.UI
                 }
             }
 
-            _summaryLabel.Text = BuildSummaryText() + "\r\n已选择：" + selected + " 条，可点击“加入”表头全选/反选。";
+            var total = _grid.Rows.Count;
+            _summaryLabel.Text = BuildSummaryText() + "\r\n已选择：" + selected + "/" + total + " 条；检查字段后点击“加入成本表”。";
         }
 
         private void OnEditPriceTiers(object sender, EventArgs e)
@@ -765,9 +846,11 @@ namespace CostAnalysis.App.UI
             _editPriceTiersButton.Enabled = !busy;
             _undoAiButton.Enabled = !busy && HasAiChanges();
             _aiResultButton.Enabled = !busy && !string.IsNullOrWhiteSpace(_lastAiRawContent);
+            _aiDetailsButton.Enabled = !busy;
             _grid.Enabled = !busy;
             _rawGrid.Enabled = !busy;
-            _aiAssistButton.Text = busy ? "识别中..." : "AI辅助识别";
+            _aiAssistButton.Text = busy ? "识别中..." : "AI识别";
+            UpdateAiDetailsMenuState();
         }
 
         private void OnPasteRawText(object sender, EventArgs e)
@@ -799,7 +882,7 @@ namespace CostAnalysis.App.UI
 
                 _summaryLabel.Text = BuildSummaryText();
                 LoadRawPreview();
-                MessageBox.Show(this, "已更新顶部原始预览。可以继续点击“AI辅助识别”。", "粘贴原始文本", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "已更新顶部原始预览。可以继续点击“AI识别”。", "从文本识别", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
 
@@ -940,6 +1023,7 @@ namespace CostAnalysis.App.UI
             _summaryLabel.Text = BuildSummaryText();
             _undoAiButton.Enabled = HasAiChanges();
             _aiResultButton.Enabled = !string.IsNullOrWhiteSpace(_lastAiRawContent);
+            UpdateAiDetailsMenuState();
             return totalChangedCount;
         }
 
@@ -1024,14 +1108,14 @@ namespace CostAnalysis.App.UI
         {
             if (!HasAiChanges())
             {
-                MessageBox.Show(this, "当前没有可撤销的 AI 改动。", "撤销AI改动", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "当前没有可撤销的 AI 改动。", "撤销AI", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             var confirm = MessageBox.Show(
                 this,
                 "确定撤销上一次 AI 回填的字段改动吗？",
-                "撤销AI改动",
+                "撤销AI",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
             if (confirm != DialogResult.Yes)
@@ -1040,7 +1124,7 @@ namespace CostAnalysis.App.UI
             }
 
             var count = UndoAiChanges();
-            MessageBox.Show(this, "已撤销 AI 改动 " + count + " 项。", "撤销AI改动", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "已撤销 AI 改动 " + count + " 项。", "撤销AI", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private int UndoAiChanges()
@@ -1085,6 +1169,7 @@ namespace CostAnalysis.App.UI
             }
 
             _undoAiButton.Enabled = false;
+            UpdateAiDetailsMenuState();
             return count;
         }
 
@@ -1108,7 +1193,7 @@ namespace CostAnalysis.App.UI
         {
             if (string.IsNullOrWhiteSpace(_lastAiRawContent))
             {
-                MessageBox.Show(this, "还没有 AI 返回结果。", "查看AI结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "还没有 AI 返回结果。", "AI结果", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -1169,7 +1254,7 @@ namespace CostAnalysis.App.UI
             var itemCount = result.Items == null ? 0 : result.Items.Count;
             var warningCount = result.Warnings == null ? 0 : result.Warnings.Count;
             return string.Format(
-                "AI 识别完成。\r\n模板：{0}\r\n置信度：{1:0.##}\r\n返回物料：{2} 条\r\n字段改动：{3} 项\r\n整体提醒：{4} 条\r\n请在预览表中复核后再确认加入。",
+                "AI 识别完成。\r\n模板：{0}\r\n置信度：{1:0.##}\r\n返回物料：{2} 条\r\n字段改动：{3} 项\r\n整体提醒：{4} 条\r\n请在预览表中复核后再加入成本表。",
                 result.TemplateType,
                 result.Confidence,
                 itemCount,
