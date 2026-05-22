@@ -12,6 +12,7 @@ namespace CostAnalysis.App.Services
     {
         public QuoteImportPreview TryApply(string sheetName, string[,] cells, int rows, int cols)
         {
+            var repository = new QuoteTemplateRepository();
             var seed = new QuoteImportPreview
             {
                 SheetName = sheetName,
@@ -19,11 +20,12 @@ namespace CostAnalysis.App.Services
                 Items = new List<QuoteImportItem>()
             };
 
-            foreach (var template in new QuoteTemplateRepository().FindMatches(seed, 5))
+            foreach (var template in repository.FindMatches(seed, 5))
             {
                 var applied = TryApplyTemplate(template, sheetName, cells, rows, cols);
                 if (applied != null && applied.Items.Count > 0)
                 {
+                    repository.MarkTemplateUsed(template.Id);
                     return applied;
                 }
             }

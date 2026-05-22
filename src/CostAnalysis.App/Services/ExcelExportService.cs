@@ -111,77 +111,130 @@ namespace CostAnalysis.App.Services
             var sb = new StringBuilder();
             sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
             sb.AppendLine("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
-            sb.AppendLine("<sheetViews><sheetView workbookViewId=\"0\"/></sheetViews>");
-            sb.AppendLine("<sheetFormatPr defaultRowHeight=\"18\"/>");
+            var headerOffset = header != null ? 5 : 0;
+            var tableHeaderRow = headerOffset + 1;
+            var dataStartRow = tableHeaderRow + 1;
+            sb.AppendLine("<sheetViews><sheetView workbookViewId=\"0\"><pane ySplit=\"" + tableHeaderRow + "\" topLeftCell=\"A" + dataStartRow + "\" activePane=\"bottomLeft\" state=\"frozen\"/></sheetView></sheetViews>");
+            sb.AppendLine("<sheetFormatPr defaultRowHeight=\"22\"/>");
             sb.AppendLine("<cols>");
             for (var i = 1; i <= columns.Count; i++)
             {
-                var width = EstimateWidth(columns[i - 1].Header);
-                sb.AppendFormat("<col min=\"{0}\" max=\"{0}\" width=\"{1}\" customWidth=\"1\"/>", i, width);
+                var width = EstimateWidth(columns[i - 1]);
+                sb.AppendFormat("<col min=\"{0}\" max=\"{0}\" width=\"{1:0.##}\" customWidth=\"1\"/>", i, width);
                 sb.AppendLine();
             }
             sb.AppendLine("</cols>");
             sb.AppendLine("<sheetData>");
 
-            var headerOffset = 0;
             if (header != null)
             {
-                WriteHeaderRows(sb, header);
-                headerOffset = 4;
+                WriteHeaderRows(sb, header, columns.Count);
             }
 
-            var tableHeaderRow = headerOffset + 1;
-            sb.AppendFormat("<row r=\"{0}\" ht=\"22\" customHeight=\"1\">", tableHeaderRow);
+            sb.AppendFormat("<row r=\"{0}\" ht=\"30\" customHeight=\"1\">", tableHeaderRow);
             sb.AppendLine();
             for (var col = 0; col < columns.Count; col++)
             {
-                WriteInlineCell(sb, tableHeaderRow, col + 1, columns[col].Header, 1);
+                WriteInlineCell(sb, tableHeaderRow, col + 1, columns[col].Header, 2);
             }
             sb.AppendLine("</row>");
 
             for (var row = 0; row < rows.Count; row++)
             {
                 var excelRow = row + headerOffset + 2;
-                sb.AppendFormat("<row r=\"{0}\">", excelRow);
+                sb.AppendFormat("<row r=\"{0}\" ht=\"25\" customHeight=\"1\">", excelRow);
                 sb.AppendLine();
                 for (var col = 0; col < columns.Count; col++)
                 {
-                    WriteInlineCell(sb, excelRow, col + 1, rows[row][col], 0);
+                    WriteInlineCell(sb, excelRow, col + 1, rows[row][col], GetBodyStyle(columns[col], row));
                 }
                 sb.AppendLine("</row>");
             }
 
+            var totalRow = headerOffset + rows.Count + 2;
+            WriteTotalRow(sb, totalRow, columns, rows);
+
             sb.AppendLine("</sheetData>");
-            sb.AppendLine("<pageMargins left=\"0.3\" right=\"0.3\" top=\"0.5\" bottom=\"0.5\" header=\"0.3\" footer=\"0.3\"/>");
+            WriteMergeCells(sb, header != null, columns.Count);
+            if (rows.Count > 0 && columns.Count > 0)
+            {
+                sb.AppendFormat("<autoFilter ref=\"A{0}:{1}{2}\"/>", tableHeaderRow, ColumnName(columns.Count), tableHeaderRow + rows.Count);
+                sb.AppendLine();
+            }
+            sb.AppendLine("<printOptions horizontalCentered=\"1\"/>");
+            sb.AppendLine("<pageMargins left=\"0.25\" right=\"0.25\" top=\"0.5\" bottom=\"0.5\" header=\"0.25\" footer=\"0.25\"/>");
+            sb.AppendLine("<pageSetup paperSize=\"9\" orientation=\"landscape\" fitToWidth=\"1\" fitToHeight=\"0\"/>");
             sb.AppendLine("</worksheet>");
             return sb.ToString();
         }
 
-        private static void WriteHeaderRows(StringBuilder sb, CostAnalysisHeader header)
+        private static void WriteHeaderRows(StringBuilder sb, CostAnalysisHeader header, int columnCount)
         {
-            sb.AppendLine("<row r=\"1\" ht=\"24\" customHeight=\"1\">");
-            WriteInlineCell(sb, 1, 1, "成本分析", 1);
+            sb.AppendLine("<row r=\"1\" ht=\"34\" customHeight=\"1\">");
+            WriteInlineCell(sb, 1, 1, "客户成本分析表", 1);
             sb.AppendLine("</row>");
 
-            sb.AppendLine("<row r=\"2\">");
-            WriteInlineCell(sb, 2, 1, "分析单号", 1);
-            WriteInlineCell(sb, 2, 2, header.AnalysisNo, 0);
-            WriteInlineCell(sb, 2, 4, "客户名称", 1);
-            WriteInlineCell(sb, 2, 5, header.CustomerName, 0);
-            WriteInlineCell(sb, 2, 7, "项目名称", 1);
-            WriteInlineCell(sb, 2, 8, header.ProjectName, 0);
+            sb.AppendLine("<row r=\"2\" ht=\"6\" customHeight=\"1\"/>");
+
+            sb.AppendLine("<row r=\"3\" ht=\"24\" customHeight=\"1\">");
+            WriteInlineCell(sb, 3, 1, "分析单号", 3);
+            WriteInlineCell(sb, 3, 2, header.AnalysisNo, 4);
+            WriteInlineCell(sb, 3, 4, "客户名称", 3);
+            WriteInlineCell(sb, 3, 5, header.CustomerName, 4);
+            WriteInlineCell(sb, 3, 7, "项目名称", 3);
+            WriteInlineCell(sb, 3, 8, header.ProjectName, 4);
             sb.AppendLine("</row>");
 
-            sb.AppendLine("<row r=\"3\">");
-            WriteInlineCell(sb, 3, 1, "分析日期", 1);
-            WriteInlineCell(sb, 3, 2, header.AnalysisDate, 0);
-            WriteInlineCell(sb, 3, 4, "税费说明", 1);
-            WriteInlineCell(sb, 3, 5, header.TaxNote, 0);
-            WriteInlineCell(sb, 3, 7, "运费说明", 1);
-            WriteInlineCell(sb, 3, 8, header.FreightNote, 0);
+            sb.AppendLine("<row r=\"4\" ht=\"24\" customHeight=\"1\">");
+            WriteInlineCell(sb, 4, 1, "分析日期", 3);
+            WriteInlineCell(sb, 4, 2, header.AnalysisDate, 4);
+            WriteInlineCell(sb, 4, 4, "税费说明", 3);
+            WriteInlineCell(sb, 4, 5, header.TaxNote, 4);
+            WriteInlineCell(sb, 4, 7, "运费说明", 3);
+            WriteInlineCell(sb, 4, 8, header.FreightNote, 4);
             sb.AppendLine("</row>");
 
-            sb.AppendLine("<row r=\"4\"/>");
+            sb.AppendLine("<row r=\"5\" ht=\"10\" customHeight=\"1\"/>");
+        }
+
+        private static void WriteTotalRow(StringBuilder sb, int rowIndex, List<ExportColumn> columns, List<List<string>> rows)
+        {
+            if (rows.Count == 0 || columns.Count == 0)
+            {
+                return;
+            }
+
+            sb.AppendFormat("<row r=\"{0}\" ht=\"28\" customHeight=\"1\">", rowIndex);
+            sb.AppendLine();
+            for (var col = 0; col < columns.Count; col++)
+            {
+                var text = string.Empty;
+                if (col == 0)
+                {
+                    text = "合计";
+                }
+                else if (IsTotalPriceColumn(columns[col]))
+                {
+                    text = SumColumn(rows, col);
+                }
+
+                WriteInlineCell(sb, rowIndex, col + 1, text, IsAmountColumn(columns[col]) ? 9 : 8);
+            }
+            sb.AppendLine("</row>");
+        }
+
+        private static void WriteMergeCells(StringBuilder sb, bool hasHeader, int columnCount)
+        {
+            if (!hasHeader || columnCount <= 1)
+            {
+                return;
+            }
+
+            var lastColumn = ColumnName(Math.Max(columnCount, 8));
+            sb.AppendLine("<mergeCells count=\"1\">");
+            sb.AppendFormat("<mergeCell ref=\"A1:{0}1\"/>", lastColumn);
+            sb.AppendLine();
+            sb.AppendLine("</mergeCells>");
         }
 
         private static void WriteInlineCell(StringBuilder sb, int row, int column, string text, int style)
@@ -191,24 +244,93 @@ namespace CostAnalysis.App.Services
             sb.AppendLine();
         }
 
-        private static double EstimateWidth(string header)
+        private static int GetBodyStyle(ExportColumn column, int rowIndex)
         {
-            if (header == "物料描述")
+            if (IsAmountColumn(column) || IsQuantityColumn(column))
             {
-                return 42;
+                return rowIndex % 2 == 0 ? 6 : 7;
             }
 
-            if (header == "物料编码")
+            return rowIndex % 2 == 0 ? 0 : 5;
+        }
+
+        private static double EstimateWidth(ExportColumn column)
+        {
+            if (column.Name == "MaterialDescription" || column.Header == "物料描述")
             {
-                return 20;
+                return 34;
             }
 
-            if (header == "供应商")
+            if (column.Name == "MaterialCode" || column.Header == "物料编码")
             {
-                return 24;
+                return 17;
             }
 
-            return Math.Max(10, Math.Min(18, (header ?? string.Empty).Length * 2.2));
+            if (column.Name == "MaterialName" || column.Header == "物料名称")
+            {
+                return 22;
+            }
+
+            if (column.Name == "Supplier" || column.Header == "供应商")
+            {
+                return 22;
+            }
+
+            if (column.Name == "ExpandedSize" || column.Header == "展开尺寸")
+            {
+                return 15;
+            }
+
+            if (IsAmountColumn(column) || IsQuantityColumn(column))
+            {
+                return 12;
+            }
+
+            return Math.Max(10, Math.Min(18, (column.Header ?? string.Empty).Length * 2.2));
+        }
+
+        private static bool IsAmountColumn(ExportColumn column)
+        {
+            return column.Name == "MaterialUnitPrice" ||
+                   column.Name == "MaterialCost" ||
+                   column.Name == "PrintingCost" ||
+                   column.Name == "PostProcessCost" ||
+                   column.Name == "OtherCost" ||
+                   column.Name == "PurchaseUnitPrice" ||
+                   column.Name == "TotalPrice";
+        }
+
+        private static bool IsQuantityColumn(ExportColumn column)
+        {
+            return column.Name == "TotalQuantity" ||
+                   column.Name == "GramWeight";
+        }
+
+        private static bool IsTotalPriceColumn(ExportColumn column)
+        {
+            return column.Name == "TotalPrice" || column.Header == "总价";
+        }
+
+        private static string SumColumn(List<List<string>> rows, int columnIndex)
+        {
+            decimal total = 0;
+            var hasValue = false;
+            foreach (var row in rows)
+            {
+                if (columnIndex >= row.Count)
+                {
+                    continue;
+                }
+
+                decimal value;
+                if (decimal.TryParse(row[columnIndex], out value))
+                {
+                    total += value;
+                    hasValue = true;
+                }
+            }
+
+            return hasValue ? total.ToString("0.####") : string.Empty;
         }
 
         private static string ColumnName(int index)
@@ -280,23 +402,36 @@ namespace CostAnalysis.App.Services
         {
             return @"<?xml version=""1.0"" encoding=""UTF-8"" standalone=""yes""?>
 <styleSheet xmlns=""http://schemas.openxmlformats.org/spreadsheetml/2006/main"">
-  <fonts count=""2"">
-    <font><sz val=""10""/><name val=""Microsoft YaHei UI""/></font>
+  <fonts count=""5"">
+    <font><sz val=""10""/><name val=""Microsoft YaHei UI""/><color rgb=""FF1D1D1F""/></font>
+    <font><b/><sz val=""18""/><name val=""Microsoft YaHei UI""/><color rgb=""FF1D1D1F""/></font>
+    <font><b/><sz val=""10""/><name val=""Microsoft YaHei UI""/><color rgb=""FFFFFFFF""/></font>
+    <font><b/><sz val=""10""/><name val=""Microsoft YaHei UI""/><color rgb=""FF5F6368""/></font>
     <font><b/><sz val=""10""/><name val=""Microsoft YaHei UI""/><color rgb=""FF1D1D1F""/></font>
   </fonts>
-  <fills count=""3"">
+  <fills count=""5"">
     <fill><patternFill patternType=""none""/></fill>
     <fill><patternFill patternType=""gray125""/></fill>
-    <fill><patternFill patternType=""solid""><fgColor rgb=""FFF5F5F7""/><bgColor indexed=""64""/></patternFill></fill>
+    <fill><patternFill patternType=""solid""><fgColor rgb=""FF1677FF""/><bgColor indexed=""64""/></patternFill></fill>
+    <fill><patternFill patternType=""solid""><fgColor rgb=""FFF7F9FC""/><bgColor indexed=""64""/></patternFill></fill>
+    <fill><patternFill patternType=""solid""><fgColor rgb=""FFEAF4FF""/><bgColor indexed=""64""/></patternFill></fill>
   </fills>
   <borders count=""2"">
     <border><left/><right/><top/><bottom/><diagonal/></border>
-    <border><left style=""thin""><color rgb=""FFD2D2D7""/></left><right style=""thin""><color rgb=""FFD2D2D7""/></right><top style=""thin""><color rgb=""FFD2D2D7""/></top><bottom style=""thin""><color rgb=""FFD2D2D7""/></bottom><diagonal/></border>
+    <border><left style=""thin""><color rgb=""FFE1E5EA""/></left><right style=""thin""><color rgb=""FFE1E5EA""/></right><top style=""thin""><color rgb=""FFE1E5EA""/></top><bottom style=""thin""><color rgb=""FFE1E5EA""/></bottom><diagonal/></border>
   </borders>
   <cellStyleXfs count=""1""><xf numFmtId=""0"" fontId=""0"" fillId=""0"" borderId=""0""/></cellStyleXfs>
-  <cellXfs count=""2"">
-    <xf numFmtId=""0"" fontId=""0"" fillId=""0"" borderId=""1"" xfId=""0"" applyBorder=""1""/>
-    <xf numFmtId=""0"" fontId=""1"" fillId=""2"" borderId=""1"" xfId=""0"" applyFont=""1"" applyFill=""1"" applyBorder=""1""/>
+  <cellXfs count=""10"">
+    <xf numFmtId=""0"" fontId=""0"" fillId=""0"" borderId=""1"" xfId=""0"" applyBorder=""1""><alignment vertical=""center"" wrapText=""1""/></xf>
+    <xf numFmtId=""0"" fontId=""1"" fillId=""0"" borderId=""0"" xfId=""0"" applyFont=""1""><alignment horizontal=""center"" vertical=""center""/></xf>
+    <xf numFmtId=""0"" fontId=""2"" fillId=""2"" borderId=""1"" xfId=""0"" applyFont=""1"" applyFill=""1"" applyBorder=""1""><alignment horizontal=""center"" vertical=""center"" wrapText=""1""/></xf>
+    <xf numFmtId=""0"" fontId=""3"" fillId=""3"" borderId=""1"" xfId=""0"" applyFont=""1"" applyFill=""1"" applyBorder=""1""><alignment horizontal=""center"" vertical=""center""/></xf>
+    <xf numFmtId=""0"" fontId=""0"" fillId=""3"" borderId=""1"" xfId=""0"" applyFill=""1"" applyBorder=""1""><alignment vertical=""center""/></xf>
+    <xf numFmtId=""0"" fontId=""0"" fillId=""3"" borderId=""1"" xfId=""0"" applyFill=""1"" applyBorder=""1""><alignment vertical=""center"" wrapText=""1""/></xf>
+    <xf numFmtId=""0"" fontId=""0"" fillId=""0"" borderId=""1"" xfId=""0"" applyBorder=""1""><alignment horizontal=""right"" vertical=""center""/></xf>
+    <xf numFmtId=""0"" fontId=""0"" fillId=""3"" borderId=""1"" xfId=""0"" applyFill=""1"" applyBorder=""1""><alignment horizontal=""right"" vertical=""center""/></xf>
+    <xf numFmtId=""0"" fontId=""4"" fillId=""4"" borderId=""1"" xfId=""0"" applyFont=""1"" applyFill=""1"" applyBorder=""1""><alignment vertical=""center""/></xf>
+    <xf numFmtId=""0"" fontId=""4"" fillId=""4"" borderId=""1"" xfId=""0"" applyFont=""1"" applyFill=""1"" applyBorder=""1""><alignment horizontal=""right"" vertical=""center""/></xf>
   </cellXfs>
 </styleSheet>";
         }

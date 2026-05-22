@@ -56,6 +56,10 @@ namespace CostAnalysis.App.UI
             scan.Click += OnScanFromCurrentAnalysis;
             toolbar.Controls.Add(scan);
 
+            var formulaHelp = new Button { Text = "公式说明", Width = 96, Height = 30 };
+            formulaHelp.Click += OnFormulaHelp;
+            toolbar.Controls.Add(formulaHelp);
+
             _batchScanButton = new Button { Text = "批量扫描报价单", Width = 126, Height = 30 };
             _batchScanButton.Click += OnBatchScanFolder;
             toolbar.Controls.Add(_batchScanButton);
@@ -111,6 +115,21 @@ namespace CostAnalysis.App.UI
         {
             var added = ScanFromCurrentAnalysis();
             MessageBox.Show(this, added == 0 ? "没有扫描到新的工艺关键词。" : "已从当前成本分析表扫描新增工艺规则 " + added + " 条。", "扫描填入", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void OnFormulaHelp(object sender, EventArgs e)
+        {
+            MessageBox.Show(
+                this,
+                "备注栏可填写轻量公式，金额列留空时自动计算：\r\n\r\n" +
+                "面积*0.02：按尺寸面积(m2)计费\r\n" +
+                "周长*2：按尺寸周长(m)计费，适合 V槽、啤线等粗算\r\n" +
+                "色数*0.1：按 4C、2色 等色数计费\r\n" +
+                "面积*0.02+0.5 最低1：支持附加费和最低收费\r\n\r\n" +
+                "如果金额列填了固定金额，会优先使用固定金额。",
+                "工艺公式说明",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
 
         private void OnBatchScanFolder(object sender, EventArgs e)
@@ -236,7 +255,7 @@ namespace CostAnalysis.App.UI
                             }
 
                             existing.Add(key);
-                            stats.Rules.Add(new BatchRuleCandidate(candidate.Keyword, candidate.CostType, "批量扫描：" + Path.GetFileName(file)));
+                            stats.Rules.Add(new BatchRuleCandidate(candidate.Keyword, candidate.CostType, BuildCandidateRemark(candidate, "批量扫描：" + Path.GetFileName(file))));
                             stats.AddedCount++;
                         }
                     }
@@ -382,7 +401,7 @@ namespace CostAnalysis.App.UI
                     }
 
                     existing.Add(key);
-                    AddRuleRow(candidate.Keyword, candidate.CostType, "从当前成本分析表扫描");
+                    AddRuleRow(candidate.Keyword, candidate.CostType, BuildCandidateRemark(candidate, "从当前成本分析表扫描"));
                     added++;
                 }
             }
@@ -415,15 +434,15 @@ namespace CostAnalysis.App.UI
                 new ProcessKeywordCandidate("4C", "PrintingCost"),
                 new ProcessKeywordCandidate("专色", "PrintingCost"),
                 new ProcessKeywordCandidate("印刷", "PrintingCost"),
-                new ProcessKeywordCandidate("UV", "PostProcessCost"),
-                new ProcessKeywordCandidate("局部UV", "PostProcessCost"),
-                new ProcessKeywordCandidate("哑胶", "PostProcessCost"),
-                new ProcessKeywordCandidate("光胶", "PostProcessCost"),
-                new ProcessKeywordCandidate("覆膜", "PostProcessCost"),
+                new ProcessKeywordCandidate("UV", "PostProcessCost", "面积*0.02 最低0.5"),
+                new ProcessKeywordCandidate("局部UV", "PostProcessCost", "面积*0.02 最低0.5"),
+                new ProcessKeywordCandidate("哑胶", "PostProcessCost", "面积*0.01 最低0.3"),
+                new ProcessKeywordCandidate("光胶", "PostProcessCost", "面积*0.01 最低0.3"),
+                new ProcessKeywordCandidate("覆膜", "PostProcessCost", "面积*0.01 最低0.3"),
                 new ProcessKeywordCandidate("过胶", "PostProcessCost"),
-                new ProcessKeywordCandidate("啤", "PostProcessCost"),
-                new ProcessKeywordCandidate("啤形", "PostProcessCost"),
-                new ProcessKeywordCandidate("V槽", "PostProcessCost"),
+                new ProcessKeywordCandidate("啤", "PostProcessCost", "周长*1 最低0.5"),
+                new ProcessKeywordCandidate("啤形", "PostProcessCost", "周长*1 最低0.5"),
+                new ProcessKeywordCandidate("V槽", "PostProcessCost", "周长*1.5 最低0.5"),
                 new ProcessKeywordCandidate("烫金", "PostProcessCost"),
                 new ProcessKeywordCandidate("击凸", "PostProcessCost"),
                 new ProcessKeywordCandidate("粘", "PostProcessCost"),
@@ -443,6 +462,16 @@ namespace CostAnalysis.App.UI
                     yield return keyword;
                 }
             }
+        }
+
+        private static string BuildCandidateRemark(ProcessKeywordCandidate candidate, string source)
+        {
+            if (candidate == null || string.IsNullOrWhiteSpace(candidate.FormulaHint))
+            {
+                return source;
+            }
+
+            return candidate.FormulaHint + "；" + source;
         }
 
         private void LoadRules()
@@ -603,13 +632,20 @@ namespace CostAnalysis.App.UI
         private sealed class ProcessKeywordCandidate
         {
             public ProcessKeywordCandidate(string keyword, string costType)
+                : this(keyword, costType, string.Empty)
+            {
+            }
+
+            public ProcessKeywordCandidate(string keyword, string costType, string formulaHint)
             {
                 Keyword = keyword;
                 CostType = costType;
+                FormulaHint = formulaHint;
             }
 
             public string Keyword { get; private set; }
             public string CostType { get; private set; }
+            public string FormulaHint { get; private set; }
         }
     }
 }

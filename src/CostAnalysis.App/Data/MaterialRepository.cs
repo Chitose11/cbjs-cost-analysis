@@ -89,7 +89,8 @@ VALUES (@name, @aliases, @category, @vendor, @spec, @unit, @tax_unit_price, @inc
             }
 
             var normalized = Normalize(materialName);
-            foreach (var material in GetAll())
+            var materials = GetAll();
+            foreach (var material in materials)
             {
                 if (Normalize(material.Name) == normalized)
                 {
@@ -106,7 +107,40 @@ VALUES (@name, @aliases, @category, @vendor, @spec, @unit, @tax_unit_price, @inc
                 }
             }
 
+            foreach (var material in materials)
+            {
+                if (IsConservativeTextMatch(normalized, Normalize(material.Name)))
+                {
+                    return material;
+                }
+
+                var aliases = (material.Aliases ?? string.Empty).Split(new[] { ';', '；', ',', '，', '|', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var alias in aliases)
+                {
+                    if (IsConservativeTextMatch(normalized, Normalize(alias)))
+                    {
+                        return material;
+                    }
+                }
+            }
+
             return null;
+        }
+
+        private static bool IsConservativeTextMatch(string source, string target)
+        {
+            if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target))
+            {
+                return false;
+            }
+
+            if (source.Length < 2 || target.Length < 2)
+            {
+                return false;
+            }
+
+            return source.IndexOf(target, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   target.IndexOf(source, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static string Normalize(string value)

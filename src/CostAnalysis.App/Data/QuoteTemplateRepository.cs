@@ -29,6 +29,33 @@ namespace CostAnalysis.App.Data
             using (var connection = new SQLiteConnection(DatabaseInitializer.ConnectionString))
             {
                 connection.Open();
+                var existingId = FindExistingTemplateId(connection, preview.TemplateType, keywords);
+                if (existingId > 0)
+                {
+                    using (var command = new SQLiteCommand(@"
+UPDATE quote_templates
+SET header_row_rule = @header_row_rule,
+    quantity_row_rule = @quantity_row_rule,
+    data_start_rule = @data_start_rule,
+    field_map_json = @field_map_json,
+    usage_count = usage_count + 1,
+    last_used_at = @last_used_at,
+    remark = @remark
+WHERE id = @id;", connection))
+                    {
+                        command.Parameters.AddWithValue("@id", existingId);
+                        command.Parameters.AddWithValue("@header_row_rule", preview.HeaderRow > 0 ? preview.HeaderRow.ToString() : string.Empty);
+                        command.Parameters.AddWithValue("@quantity_row_rule", preview.QuantityRow > 0 ? preview.QuantityRow.ToString() : string.Empty);
+                        command.Parameters.AddWithValue("@data_start_rule", preview.DataStartRow > 0 ? preview.DataStartRow.ToString() : string.Empty);
+                        command.Parameters.AddWithValue("@field_map_json", fieldMapJson);
+                        command.Parameters.AddWithValue("@last_used_at", now);
+                        command.Parameters.AddWithValue("@remark", "模板复扫更新：" + (sourceFileName ?? string.Empty));
+                        command.ExecuteNonQuery();
+                    }
+
+                    return;
+                }
+
                 using (var command = new SQLiteCommand(@"
 INSERT INTO quote_templates
     (name, template_type, header_keywords, header_row_rule, quantity_row_rule, data_start_rule, field_map_json, is_enabled, usage_count, last_used_at, remark)
@@ -44,6 +71,29 @@ VALUES
                     command.Parameters.AddWithValue("@field_map_json", fieldMapJson);
                     command.Parameters.AddWithValue("@last_used_at", now);
                     command.Parameters.AddWithValue("@remark", "AI清洗学习：" + (sourceFileName ?? string.Empty));
+                    command.ExecuteNonQuery();
+                }
+            }
+        }
+
+        public void MarkTemplateUsed(int templateId)
+        {
+            if (templateId <= 0)
+            {
+                return;
+            }
+
+            using (var connection = new SQLiteConnection(DatabaseInitializer.ConnectionString))
+            {
+                connection.Open();
+                using (var command = new SQLiteCommand(@"
+UPDATE quote_templates
+SET usage_count = usage_count + 1,
+    last_used_at = @last_used_at
+WHERE id = @id;", connection))
+                {
+                    command.Parameters.AddWithValue("@id", templateId);
+                    command.Parameters.AddWithValue("@last_used_at", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
                     command.ExecuteNonQuery();
                 }
             }
@@ -127,6 +177,24 @@ LIMIT 200;", connection))
             }
 
             return records;
+        }
+
+        private static int FindExistingTemplateId(SQLiteConnection connection, string templateType, string keywords)
+        {
+            using (var command = new SQLiteCommand(@"
+SELECT id
+FROM quote_templates
+WHERE is_enabled = 1
+  AND IFNULL(template_type, '') = @template_type
+  AND IFNULL(header_keywords, '') = @header_keywords
+ORDER BY id DESC
+LIMIT 1;", connection))
+            {
+                command.Parameters.AddWithValue("@template_type", templateType ?? string.Empty);
+                command.Parameters.AddWithValue("@header_keywords", keywords ?? string.Empty);
+                var value = command.ExecuteScalar();
+                return value == null || value == DBNull.Value ? 0 : Convert.ToInt32(value);
+            }
         }
 
         private static int Score(QuoteTemplateRecord record, HashSet<string> currentTokens, QuoteImportPreview preview)

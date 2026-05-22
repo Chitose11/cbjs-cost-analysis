@@ -109,7 +109,7 @@ namespace CostAnalysis.App.Services
             if (lines.Count == 0)
             {
                 lines.Add("未从 PDF 中提取到可靠文本，当前 PDF 可能是扫描件或使用了无法反解的内嵌字体编码。");
-                lines.Add("建议：安装 Poppler 的 pdftotext 后重试；如果是扫描件，请安装 tesseract OCR 或把 OCR 文本保存为同名 .txt 后重新导入。");
+                lines.Add("建议：打开 OCR 设置检测内置 Poppler/Tesseract；也可以把 OCR 文本保存为同名 .txt 后重新导入。");
             }
 
             var preview = CreateDocumentPreview(filePath, "PDF自动解析", lines);
@@ -129,7 +129,7 @@ namespace CostAnalysis.App.Services
             if (lines.Count == 0)
             {
                 lines.Add("图片文件：" + Path.GetFileName(filePath));
-                lines.Add("未检测到可用 OCR 文本。可安装 tesseract OCR，或放置同名 .txt 文本后重新导入。");
+                lines.Add("未检测到可用 OCR 文本。请在 OCR 设置中检测内置 Tesseract，或放置同名 .txt 文本后重新导入。");
             }
 
             var preview = CreateDocumentPreview(filePath, "图片OCR自动解析", lines);
@@ -148,19 +148,10 @@ namespace CostAnalysis.App.Services
             var lines = ExtractPdfTextLines(filePath);
             if (lines.Count == 0)
             {
-                lines.Add("未从 PDF 中提取到可复制文本。可在导入确认页使用 AI 辅助识别，或后续接入 OCR。");
+                lines.Add("未从 PDF 中提取到可复制文本。可在 OCR 设置中检测内置工具，或在导入确认页使用 AI 辅助识别。");
             }
 
             return CreateDocumentPreview(filePath, "PDF文本预览", lines);
-        }
-
-        private static QuoteImportPreview ImportImagePlaceholder(string filePath)
-        {
-            return CreateDocumentPreview(filePath, "图片报价单待OCR", new List<string>
-            {
-                "图片文件：" + Path.GetFileName(filePath),
-                "当前轻量版不内置本地 OCR。可保留为待识别文件，后续接入视觉 OCR API 后自动识别。"
-            });
         }
 
         private static QuoteImportPreview CreateDocumentPreview(string filePath, string templateType, List<string> lines)
