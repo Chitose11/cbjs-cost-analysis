@@ -13,6 +13,13 @@ namespace CostAnalysis.App.UI
 {
     internal sealed class MainForm : MetroForm
     {
+        private sealed class PreflightIssue
+        {
+            public int RowIndex { get; set; }
+            public string Title { get; set; }
+            public string Message { get; set; }
+        }
+
         private readonly Color _canvas = Color.White;
         private readonly Color _panel = Color.White;
         private readonly Color _ink = Color.FromArgb(29, 29, 31);
@@ -662,12 +669,20 @@ namespace CostAnalysis.App.UI
                 }
 
                 AppendPreviewRows(preview, previewForm.SelectedItems);
-                _statusLabel.Text = string.Format(
-                    "已加入报价单物料：{0} 条。供应商：{1}，Sheet={2}，模板={3}。请填写总用量以匹配阶梯单价。",
-                    previewForm.SelectedItems.Count,
-                    preview.Supplier,
-                    preview.SheetName,
-                    preview.TemplateType);
+                var issues = CollectPreflightIssues();
+                LoadCurrentRowToDetailCard();
+                RefreshDetailCards();
+                _statusLabel.Text = issues.Count > 0
+                    ? string.Format(
+                        "已加入报价单物料：{0} 条；发现 {1} 项需要确认，已展开第一条问题明细。",
+                        previewForm.SelectedItems.Count,
+                        issues.Count)
+                    : string.Format(
+                        "已加入报价单物料：{0} 条。供应商：{1}，Sheet={2}，模板={3}。",
+                        previewForm.SelectedItems.Count,
+                        preview.Supplier,
+                        preview.SheetName,
+                        preview.TemplateType);
             }
         }
 
@@ -1501,6 +1516,7 @@ namespace CostAnalysis.App.UI
             _syncingDetailCard = true;
             try
             {
+                ApplyDetailStatusStyle(row);
                 UpdateDetailFieldFromRow(row, "PurchaseUnitPrice", activeControl);
                 UpdateDetailFieldFromRow(row, "TotalPrice", activeControl);
                 UpdateDetailFieldFromRow(row, "ValidationStatus", activeControl);
@@ -1760,7 +1776,7 @@ namespace CostAnalysis.App.UI
         {
             var name = SafeCell(row, "MaterialName");
             var code = SafeCell(row, "MaterialCode");
-            var status = SafeCell(row, "ValidationStatus");
+            var status = BuildStatusTagText(row);
             var text = string.IsNullOrWhiteSpace(name) ? code : name;
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -1768,6 +1784,74 @@ namespace CostAnalysis.App.UI
             }
 
             return string.IsNullOrWhiteSpace(status) ? text : text + "    " + status;
+        }
+
+        private static string BuildStatusTagText(DataGridViewRow row)
+        {
+            var status = SafeCell(row, "ValidationStatus");
+            if (string.IsNullOrWhiteSpace(status))
+            {
+                return "待校验";
+            }
+
+            if (status.IndexOf("缺", StringComparison.Ordinal) >= 0)
+            {
+                return "缺字段";
+            }
+
+            if (status.IndexOf("不一致", StringComparison.Ordinal) >= 0 ||
+                status.IndexOf("不等于", StringComparison.Ordinal) >= 0)
+            {
+                return "成本异常";
+            }
+
+            if (status.IndexOf("AI", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                status.IndexOf("确认", StringComparison.Ordinal) >= 0)
+            {
+                return "待确认";
+            }
+
+            if (status.IndexOf("已完成", StringComparison.Ordinal) >= 0)
+            {
+                return "已完成";
+            }
+
+            return "待确认";
+        }
+
+        private void ApplyDetailStatusStyle(DataGridViewRow row)
+        {
+            if (_detailStatusLabel == null)
+            {
+                return;
+            }
+
+            var tag = row == null ? "待选择" : BuildStatusTagText(row);
+            _detailStatusLabel.Text = "状态：" + tag;
+            _detailStatusLabel.BackColor = Color.White;
+            _detailStatusLabel.UseCustomBackColor = true;
+
+            if (tag == "已完成")
+            {
+                _detailStatusLabel.ForeColor = Color.FromArgb(42, 130, 70);
+            }
+            else if (tag == "缺字段" || tag == "成本异常")
+            {
+                _detailStatusLabel.ForeColor = Color.FromArgb(190, 70, 60);
+            }
+            else if (tag == "待确认")
+            {
+                _detailStatusLabel.ForeColor = Color.FromArgb(150, 96, 0);
+            }
+            else
+            {
+                _detailStatusLabel.ForeColor = _muted;
+            }
+
+            if (row != null)
+            {
+                _commandTips.SetToolTip(_detailStatusLabel, SafeCell(row, "ValidationStatus"));
+            }
         }
 
         private static string SafeCell(DataGridViewRow row, string columnName)
@@ -1794,7 +1878,7 @@ namespace CostAnalysis.App.UI
                 if (row == null)
                 {
                     _detailTitleLabel.Text = "成本明细";
-                    _detailStatusLabel.Text = "请选择或新增一条明细";
+                    ApplyDetailStatusStyle(null);
                     _detailSelectedCheckBox.Checked = false;
                     foreach (var box in _detailFields.Values)
                     {
@@ -1805,7 +1889,7 @@ namespace CostAnalysis.App.UI
                 }
 
                 _detailTitleLabel.Text = "成本明细 " + Convert.ToString(row.Cells["No"].Value);
-                _detailStatusLabel.Text = Convert.ToString(row.Cells["ValidationStatus"].Value);
+                ApplyDetailStatusStyle(row);
                 _detailSelectedCheckBox.Checked = IsRowChecked(row);
                 foreach (var pair in _detailFields)
                 {
@@ -2060,6 +2144,12 @@ namespace CostAnalysis.App.UI
 
         private void OnExportExcelPlaceholder(object sender, EventArgs e)
         {
+            RecalculateRows();
+            if (!ConfirmPreflightIssues("导出"))
+            {
+                return;
+            }
+
             using (var dialog = new SaveFileDialog())
             {
                 dialog.Title = "导出客户成本分析表";
@@ -2072,7 +2162,6 @@ namespace CostAnalysis.App.UI
 
                 try
                 {
-                    ValidateGrid();
                     new ExcelExportService().ExportGrid(dialog.FileName, ReadHeader(), _grid);
                     _statusLabel.Text = "已导出 Excel：" + dialog.FileName;
                     MessageBox.Show(this, "导出完成。", "导出 Excel", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -2087,7 +2176,11 @@ namespace CostAnalysis.App.UI
         private void OnSaveAnalysis(object sender, EventArgs e)
         {
             RecalculateRows();
-            ValidateGrid();
+            if (!ConfirmPreflightIssues("保存"))
+            {
+                return;
+            }
+
             try
             {
                 var id = new CostAnalysisRepository().SaveFromGrid(ReadHeader(), _grid);
@@ -2184,7 +2277,17 @@ namespace CostAnalysis.App.UI
         {
             LoadHeader(analysis.Header);
             LoadSavedItems(analysis.Items);
-            _statusLabel.Text = "已打开成本分析单，ID=" + analysisId + "，明细 " + analysis.Items.Count + " 条。";
+            var issues = CollectPreflightIssues();
+            var issueRowIndex = FindFirstIssueRowIndex(issues);
+            if (issueRowIndex >= 0)
+            {
+                SelectGridRow(issueRowIndex);
+                _statusLabel.Text = "已打开成本分析单，ID=" + analysisId + "，明细 " + analysis.Items.Count + " 条；发现 " + issues.Count + " 项需要确认，已展开第一条。";
+            }
+            else
+            {
+                _statusLabel.Text = "已打开成本分析单，ID=" + analysisId + "，明细 " + analysis.Items.Count + " 条；全部明细已完成。";
+            }
         }
 
         private void RecalculateRows()
@@ -2301,11 +2404,14 @@ namespace CostAnalysis.App.UI
                 if (messages.Count > 0)
                 {
                     warningCount++;
-                    row.Cells["ValidationStatus"].Value = string.Join("；", messages.ToArray());
+                    var status = string.Join("；", messages.ToArray());
+                    row.Cells["ValidationStatus"].Value = status;
+                    ApplyValidationStatusCellStyle(row, status);
                 }
                 else
                 {
                     row.Cells["ValidationStatus"].Value = "已完成";
+                    ApplyValidationStatusCellStyle(row, "已完成");
                 }
             }
 
@@ -2315,6 +2421,150 @@ namespace CostAnalysis.App.UI
             }
 
             return warningCount;
+        }
+
+        private void ApplyValidationStatusCellStyle(DataGridViewRow row, string status)
+        {
+            var cell = row.Cells["ValidationStatus"];
+            cell.ToolTipText = status ?? string.Empty;
+            cell.Style.ForeColor = _muted;
+            cell.Style.BackColor = Color.Empty;
+
+            var tag = BuildStatusTagText(row);
+            if (tag == "已完成")
+            {
+                cell.Style.ForeColor = Color.FromArgb(42, 130, 70);
+                cell.Style.BackColor = Color.FromArgb(240, 250, 243);
+            }
+            else if (tag == "缺字段" || tag == "成本异常")
+            {
+                cell.Style.ForeColor = Color.FromArgb(190, 70, 60);
+                cell.Style.BackColor = Color.FromArgb(255, 241, 240);
+            }
+            else if (tag == "待确认")
+            {
+                cell.Style.ForeColor = Color.FromArgb(150, 96, 0);
+                cell.Style.BackColor = Color.FromArgb(255, 247, 230);
+            }
+        }
+
+        private List<PreflightIssue> CollectPreflightIssues()
+        {
+            ValidateGrid();
+            var issues = new List<PreflightIssue>();
+            var hasRows = false;
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                if (row.IsNewRow)
+                {
+                    continue;
+                }
+
+                hasRows = true;
+                var status = SafeCell(row, "ValidationStatus");
+                if (string.IsNullOrWhiteSpace(status) || status == "已完成")
+                {
+                    continue;
+                }
+
+                issues.Add(new PreflightIssue
+                {
+                    RowIndex = row.Index,
+                    Title = BuildIssueRowTitle(row),
+                    Message = status
+                });
+            }
+
+            if (!hasRows)
+            {
+                issues.Add(new PreflightIssue
+                {
+                    RowIndex = -1,
+                    Title = "当前分析单",
+                    Message = "暂无成本明细"
+                });
+            }
+
+            return issues;
+        }
+
+        private bool ConfirmPreflightIssues(string actionName)
+        {
+            var issues = CollectPreflightIssues();
+            if (issues.Count == 0)
+            {
+                _statusLabel.Text = "检查完成：所有明细均已完成。";
+                return true;
+            }
+
+            var firstRowIndex = FindFirstIssueRowIndex(issues);
+            if (firstRowIndex >= 0)
+            {
+                SelectGridRow(firstRowIndex);
+            }
+
+            var message = BuildPreflightMessage(actionName, issues);
+            var result = MessageBox.Show(
+                this,
+                message,
+                actionName + "前检查",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            _statusLabel.Text = "检查完成：发现 " + issues.Count + " 项需要确认。";
+            return result == DialogResult.Yes;
+        }
+
+        private static int FindFirstIssueRowIndex(List<PreflightIssue> issues)
+        {
+            foreach (var issue in issues)
+            {
+                if (issue.RowIndex >= 0)
+                {
+                    return issue.RowIndex;
+                }
+            }
+
+            return -1;
+        }
+
+        private static string BuildPreflightMessage(string actionName, List<PreflightIssue> issues)
+        {
+            var lines = new List<string>();
+            lines.Add(actionName + "前发现 " + issues.Count + " 项需要确认：");
+            lines.Add(string.Empty);
+
+            var take = Math.Min(8, issues.Count);
+            for (var i = 0; i < take; i++)
+            {
+                var issue = issues[i];
+                lines.Add((i + 1) + ". " + issue.Title + "：" + issue.Message);
+            }
+
+            if (issues.Count > take)
+            {
+                lines.Add("……还有 " + (issues.Count - take) + " 项未显示。");
+            }
+
+            lines.Add(string.Empty);
+            lines.Add(FindFirstIssueRowIndex(issues) >= 0
+                ? "已自动展开第一条问题明细。是否仍然继续" + actionName + "？"
+                : "是否仍然继续" + actionName + "？");
+            return string.Join("\r\n", lines.ToArray());
+        }
+
+        private static string BuildIssueRowTitle(DataGridViewRow row)
+        {
+            var no = SafeCell(row, "No");
+            var name = SafeCell(row, "MaterialName");
+            var code = SafeCell(row, "MaterialCode");
+            var title = string.IsNullOrWhiteSpace(name) ? code : name;
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = "未填写物料";
+            }
+
+            return "成本" + no + " " + title;
         }
 
         private void RequireCell(DataGridViewRow row, string columnName, string message, System.Collections.Generic.List<string> messages)
@@ -2375,12 +2625,14 @@ namespace CostAnalysis.App.UI
                 }
             }
 
-            ApplyProcessRulesToRows(GetRowsByStartIndex(_grid.Rows.Count - items.Count));
+            var appendedRows = GetRowsByStartIndex(_grid.Rows.Count - items.Count);
+            ApplyProcessRulesToRows(appendedRows);
             RecalculateRows();
             var firstNewRow = Math.Max(0, _grid.Rows.Count - items.Count);
+            var firstProblemRow = FindFirstProblemRowIndexFromRows(appendedRows);
             if (_grid.Rows.Count > 0)
             {
-                _grid.CurrentCell = _grid.Rows[firstNewRow].Cells["MaterialCode"];
+                _grid.CurrentCell = _grid.Rows[firstProblemRow >= 0 ? firstProblemRow : firstNewRow].Cells["MaterialCode"];
             }
 
             LoadCurrentRowToDetailCard();
@@ -2399,6 +2651,30 @@ namespace CostAnalysis.App.UI
             }
 
             return rows;
+        }
+
+        private static int FindFirstProblemRowIndexFromRows(List<DataGridViewRow> rows)
+        {
+            if (rows == null)
+            {
+                return -1;
+            }
+
+            foreach (var row in rows)
+            {
+                if (row == null || row.IsNewRow)
+                {
+                    continue;
+                }
+
+                var status = SafeCell(row, "ValidationStatus");
+                if (!string.IsNullOrWhiteSpace(status) && status != "已完成")
+                {
+                    return row.Index;
+                }
+            }
+
+            return -1;
         }
 
         private CostAnalysisHeader ReadHeader()
