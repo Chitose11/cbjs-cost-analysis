@@ -172,7 +172,7 @@ namespace CostAnalysis.App.UI
 
             AddMenuButton(menu, "成本分析列表", (_, __) => RefreshRecentAnalysesList(), true);
             AddMenuButton(menu, "报价单导入", OnImportQuote);
-            AddMenuButton(menu, "批量预扫描", OnBatchScanQuotes);
+            AddMenuButton(menu, "AI学习识别", OnBatchScanQuotes);
             AddMenuButton(menu, "材料库", OnOpenMaterials);
             AddMenuButton(menu, "工艺规则", OnOpenProcessRules);
             AddMenuButton(menu, "系统设置", OnOpenAiSettings);
@@ -285,7 +285,7 @@ namespace CostAnalysis.App.UI
             bar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             AddCommandButton(bar, "导入报价", OnImportQuote, true, "导入单个报价单并进入确认页");
-            AddCommandButton(bar, "批量扫描", OnBatchScanQuotes, false, "扫描文件夹内多个报价单");
+            AddCommandButton(bar, "AI识别", OnBatchScanQuotes, false, "扫描报价单文件夹，校对识别结果并学习模板/材料/工艺");
             AddCommandButton(bar, "新增", OnAddRow, false, "新增一条空白成本明细");
             AddCommandButton(bar, "删除", OnDeleteSelectedRows, false, "删除已勾选的明细行");
             AddCommandButton(bar, "价格预警", OnOpenPriceWarningReport, false, "查看供应商比价和涨价预警");
@@ -767,13 +767,8 @@ namespace CostAnalysis.App.UI
             var defaultFolder = DirectoryExists(@"D:\1\LB报价单") ? @"D:\1\LB报价单" : string.Empty;
             using (var form = new BatchQuoteScanForm(defaultFolder))
             {
-                if (form.ShowDialog(this) != DialogResult.OK || form.SelectedPreview == null)
-                {
-                    _statusLabel.Text = "已关闭批量预扫描。";
-                    return;
-                }
-
-                ShowPreviewAndAppend(form.SelectedPreview);
+                form.ShowDialog(this);
+                _statusLabel.Text = "已关闭 AI 学习识别。";
             }
         }
 
@@ -2701,6 +2696,13 @@ namespace CostAnalysis.App.UI
                     return;
                 }
 
+                if ((result == DialogResult.Yes || form.HistoryRequested) &&
+                    (!string.IsNullOrWhiteSpace(form.SelectedMaterialCode) || !string.IsNullOrWhiteSpace(form.SelectedMaterialName)))
+                {
+                    OpenHistoryForWarning(form.SelectedMaterialCode, form.SelectedMaterialName, form.SelectedItemTitle);
+                    return;
+                }
+
                 if (result == DialogResult.OK && form.SelectedRowIndex >= 0)
                 {
                     SelectGridRow(form.SelectedRowIndex);
@@ -2709,11 +2711,31 @@ namespace CostAnalysis.App.UI
             }
         }
 
+        private void OpenHistoryForWarning(string materialCode, string materialName, string title)
+        {
+            var items = new CostAnalysisRepository().SearchCostHistory(materialCode, materialName, 120);
+            if (items.Count == 0)
+            {
+                MessageBox.Show(this, "当前预警明细没有找到可查看的历史记录。", "历史成本参考", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                _statusLabel.Text = "未找到价格预警对应的历史记录：" + (title ?? string.Empty);
+                return;
+            }
+
+            using (var form = new CostHistoryReferenceForm(materialCode, materialName, items, false))
+            {
+                form.ShowDialog(this);
+            }
+
+            _statusLabel.Text = "已查看价格预警历史记录：" + (title ?? string.Empty);
+        }
+
         private DataTable BuildPriceWarningTable()
         {
             ValidateGrid();
             var table = new DataTable();
             table.Columns.Add("RowIndex", typeof(int));
+            table.Columns.Add("MaterialCode", typeof(string));
+            table.Columns.Add("MaterialName", typeof(string));
             table.Columns.Add("级别", typeof(string));
             table.Columns.Add("明细", typeof(string));
             table.Columns.Add("供应商", typeof(string));
@@ -2736,6 +2758,8 @@ namespace CostAnalysis.App.UI
 
                 table.Rows.Add(
                     row.Index,
+                    SafeCell(row, "MaterialCode"),
+                    SafeCell(row, "MaterialName"),
                     warning.Severity == PriceWarningSeverity.Red ? "红色" : "黄色",
                     BuildIssueRowTitle(row),
                     SafeCell(row, "Supplier"),

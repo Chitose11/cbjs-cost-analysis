@@ -12,10 +12,14 @@ namespace CostAnalysis.App.UI
     {
         private readonly MetroGrid _grid;
         private readonly MetroButton _locateButton;
+        private readonly MetroButton _historyButton;
 
         public int SelectedRowIndex { get; private set; }
         public string SelectedItemTitle { get; private set; }
+        public string SelectedMaterialCode { get; private set; }
+        public string SelectedMaterialName { get; private set; }
         public bool SettingsChanged { get; private set; }
+        public bool HistoryRequested { get; private set; }
 
         public PriceWarningReportForm(DataTable warnings)
         {
@@ -71,11 +75,12 @@ namespace CostAnalysis.App.UI
             var actions = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 4,
+                ColumnCount = 5,
                 RowCount = 1,
                 BackColor = Color.White
             };
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 128));
@@ -85,13 +90,17 @@ namespace CostAnalysis.App.UI
             settings.Click += (_, __) => OpenSettings();
             actions.Controls.Add(settings, 1, 0);
 
+            _historyButton = CreateButton("查看历史", false);
+            _historyButton.Click += (_, __) => RequestHistory();
+            actions.Controls.Add(_historyButton, 2, 0);
+
             var close = CreateButton("关闭", false);
             close.Click += (_, __) => DialogResult = DialogResult.Cancel;
-            actions.Controls.Add(close, 2, 0);
+            actions.Controls.Add(close, 3, 0);
 
             _locateButton = CreateButton("定位明细", true);
             _locateButton.Click += (_, __) => LocateSelectedWarning();
-            actions.Controls.Add(_locateButton, 3, 0);
+            actions.Controls.Add(_locateButton, 4, 0);
             root.Controls.Add(actions, 0, 3);
 
             UpdateLocateButton();
@@ -132,6 +141,16 @@ namespace CostAnalysis.App.UI
             if (_grid.Columns.Contains("RowIndex"))
             {
                 _grid.Columns["RowIndex"].Visible = false;
+            }
+
+            if (_grid.Columns.Contains("MaterialCode"))
+            {
+                _grid.Columns["MaterialCode"].Visible = false;
+            }
+
+            if (_grid.Columns.Contains("MaterialName"))
+            {
+                _grid.Columns["MaterialName"].Visible = false;
             }
 
             SetColumnWidth("级别", 72);
@@ -194,7 +213,9 @@ namespace CostAnalysis.App.UI
 
         private void UpdateLocateButton()
         {
-            _locateButton.Enabled = ReadSelectedRowIndex() >= 0;
+            var hasSelection = ReadSelectedRowIndex() >= 0;
+            _locateButton.Enabled = hasSelection;
+            _historyButton.Enabled = hasSelection && (!string.IsNullOrWhiteSpace(ReadSelectedMaterialCode()) || !string.IsNullOrWhiteSpace(ReadSelectedMaterialName()));
         }
 
         private void LocateSelectedWarning()
@@ -208,6 +229,22 @@ namespace CostAnalysis.App.UI
             SelectedRowIndex = rowIndex;
             SelectedItemTitle = ReadSelectedItemTitle();
             DialogResult = DialogResult.OK;
+        }
+
+        private void RequestHistory()
+        {
+            var rowIndex = ReadSelectedRowIndex();
+            if (rowIndex < 0)
+            {
+                return;
+            }
+
+            SelectedRowIndex = rowIndex;
+            SelectedItemTitle = ReadSelectedItemTitle();
+            SelectedMaterialCode = ReadSelectedMaterialCode();
+            SelectedMaterialName = ReadSelectedMaterialName();
+            HistoryRequested = true;
+            DialogResult = DialogResult.Yes;
         }
 
         private void OpenSettings()
@@ -242,6 +279,27 @@ namespace CostAnalysis.App.UI
             }
 
             var value = _grid.CurrentRow.Cells["明细"].Value;
+            return value == null ? string.Empty : value.ToString();
+        }
+
+        private string ReadSelectedMaterialCode()
+        {
+            return ReadSelectedHiddenText("MaterialCode");
+        }
+
+        private string ReadSelectedMaterialName()
+        {
+            return ReadSelectedHiddenText("MaterialName");
+        }
+
+        private string ReadSelectedHiddenText(string columnName)
+        {
+            if (_grid.CurrentRow == null || !_grid.Columns.Contains(columnName))
+            {
+                return string.Empty;
+            }
+
+            var value = _grid.CurrentRow.Cells[columnName].Value;
             return value == null ? string.Empty : value.ToString();
         }
 

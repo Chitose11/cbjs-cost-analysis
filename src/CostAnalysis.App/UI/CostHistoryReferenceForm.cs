@@ -81,7 +81,7 @@ namespace CostAnalysis.App.UI
             };
             var subtitle = new Label
             {
-                Text = "匹配条件：物料编码 " + EmptyText(materialCode) + "；物料名称 " + EmptyText(materialName),
+                Text = (_allowApply ? "匹配条件：" : "只读查看：") + "物料编码 " + EmptyText(materialCode) + "；物料名称 " + EmptyText(materialName),
                 Dock = DockStyle.Bottom,
                 Height = 20,
                 ForeColor = Color.FromArgb(110, 110, 115)

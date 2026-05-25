@@ -23,11 +23,13 @@
   - 识别表头行、数量阶梯、物料编码、物料名称、规格描述、尺寸、用量、阶梯价格
   - 导入前进入确认页，用户确认后才写入成本分析表
 
-- 批量预扫描
+- AI 学习识别
   - 选择报价单文件夹
-  - 扫描 `.xls` / `.xlsx`
-  - 显示可导入/未识别、模板、供应商、Sheet、物料数和错误信息
-  - 选中可导入报价单后进入导入确认页
+  - 扫描 `.xls` / `.xlsx`，同时把可识别结构学习为本地模板规则
+  - 显示可校对/未识别、模板、供应商、Sheet、物料数、材料候选、工艺候选和错误信息
+  - 选中报价单后进入 `识别校对` 窗口，查看原始表格、物料明细、材料信息和工艺信息
+  - 可勾选材料候选、工艺候选并保存到材料库/工艺规则库
+  - 默认只做识别、校对和规则学习，不批量导入成本分析表
 
 - 材料库
   - 维护材料名称、别名、类别、材料厂家、克重规格、计价单位、含税单价、是否含运、备注
@@ -129,14 +131,16 @@ src\CostAnalysis.App\bin\Release\net48\CostAnalysis.App.exe
 5. 勾选要加入的物料
 6. 点击 `确认加入`
 
-### 2. 批量预扫描报价单
+### 2. AI 学习识别报价单
 
-1. 点击 `批量预扫描`
+1. 点击 `AI学习识别`
 2. 选择报价单文件夹
-3. 点击 `开始扫描`
-4. 选择状态为 `可导入` 的报价单
-5. 点击 `导入选中`
-6. 进入导入确认页继续确认
+3. 点击 `开始学习`
+4. 勾选或双击需要检查的报价单
+5. 点击 `识别校对`
+6. 在校对窗口检查原始表格、物料明细、材料候选和工艺候选
+7. 按需点击 `本地重新识别`、`AI重新识别`、`确认学习规则`、`保存材料候选`、`保存工艺候选`
+8. 如需真正加入成本分析表，请回到主界面使用 `报价单导入` 的单据确认流程
 
 ### 3. 编辑成本分析
 
@@ -218,7 +222,7 @@ tmp/
 - 主窗体：`src/CostAnalysis.App/UI/MainForm.cs`
 - 报价单导入：`src/CostAnalysis.App/Services/ExcelQuoteImportService.cs`
 - 导入确认页：`src/CostAnalysis.App/UI/QuoteImportPreviewForm.cs`
-- 批量预扫描：`src/CostAnalysis.App/UI/BatchQuoteScanForm.cs`
+- AI 学习识别：`src/CostAnalysis.App/UI/BatchQuoteScanForm.cs`
 - Excel 导出：`src/CostAnalysis.App/Services/ExcelExportService.cs`
 - AI 调用：`src/CostAnalysis.App/Services/DeepSeekClient.cs`
 - AI 设置：`src/CostAnalysis.App/Data/AiSettingsRepository.cs`

@@ -58,6 +58,10 @@ namespace CostAnalysis.App.UI
             add.Click += (_, __) => _grid.Rows.Add();
             toolbar.Controls.Add(add);
 
+            var delete = new Button { Text = "删除选中", Width = 96, Height = 30 };
+            delete.Click += OnDeleteSelectedRows;
+            toolbar.Controls.Add(delete);
+
             var batchEdit = new Button { Text = "批量编辑", Width = 96, Height = 30 };
             batchEdit.Click += OnBatchEdit;
             toolbar.Controls.Add(batchEdit);
@@ -329,6 +333,57 @@ namespace CostAnalysis.App.UI
             }
 
             return changed;
+        }
+
+        private void OnDeleteSelectedRows(object sender, EventArgs e)
+        {
+            var rows = GetSelectedRows();
+            if (rows.Count == 0)
+            {
+                MessageBox.Show(this, "请先选择要删除的材料行。", "删除材料", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                this,
+                "确定删除选中的 " + rows.Count + " 条材料吗？\r\n删除后需要点击“保存”才会写入材料库。",
+                "删除材料",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (confirm != DialogResult.Yes)
+            {
+                return;
+            }
+
+            rows.Sort((left, right) => right.Index.CompareTo(left.Index));
+            foreach (var row in rows)
+            {
+                if (!row.IsNewRow)
+                {
+                    _grid.Rows.Remove(row);
+                }
+            }
+
+            _scanStatusLabel.Text = "已删除 " + rows.Count + " 条材料，请点击“保存”持久化。";
+        }
+
+        private List<DataGridViewRow> GetSelectedRows()
+        {
+            var rows = new List<DataGridViewRow>();
+            var seen = new HashSet<int>();
+            foreach (DataGridViewCell cell in _grid.SelectedCells)
+            {
+                if (cell.RowIndex >= 0 && seen.Add(cell.RowIndex))
+                {
+                    var row = _grid.Rows[cell.RowIndex];
+                    if (!row.IsNewRow)
+                    {
+                        rows.Add(row);
+                    }
+                }
+            }
+
+            return rows;
         }
 
         private List<DataGridViewRow> GetTargetRows()

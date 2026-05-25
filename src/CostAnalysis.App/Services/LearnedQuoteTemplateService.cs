@@ -12,6 +12,16 @@ namespace CostAnalysis.App.Services
     {
         public QuoteImportPreview TryApply(string sheetName, string[,] cells, int rows, int cols)
         {
+            return TryApply(sheetName, cells, rows, cols, true);
+        }
+
+        public QuoteImportPreview TryApplyForValidation(string sheetName, string[,] cells, int rows, int cols)
+        {
+            return TryApply(sheetName, cells, rows, cols, false);
+        }
+
+        private QuoteImportPreview TryApply(string sheetName, string[,] cells, int rows, int cols, bool markTemplateUsed)
+        {
             var repository = new QuoteTemplateRepository();
             var seed = new QuoteImportPreview
             {
@@ -25,7 +35,11 @@ namespace CostAnalysis.App.Services
                 var applied = TryApplyTemplate(template, sheetName, cells, rows, cols);
                 if (applied != null && applied.Items.Count > 0)
                 {
-                    repository.MarkTemplateUsed(template.Id);
+                    if (markTemplateUsed)
+                    {
+                        repository.MarkTemplateUsed(template.Id);
+                    }
+
                     return applied;
                 }
             }
