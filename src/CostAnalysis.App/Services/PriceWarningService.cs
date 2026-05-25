@@ -7,14 +7,11 @@ namespace CostAnalysis.App.Services
 {
     internal sealed class PriceWarningService
     {
-        private const decimal YellowIncreaseRate = 0.0001m;
-        private const decimal RedIncreaseRate = 0.10m;
-        private const decimal YellowLowerSupplierRate = 0.03m;
-        private const decimal RedLowerSupplierRate = 0.10m;
         private const int RecentHistoryLimit = 300;
 
         public PriceWarningResult EvaluateQuoteItem(string supplier, QuoteImportItem item)
         {
+            var settings = new PriceWarningSettingsRepository().Get();
             var currentPrice = GetCurrentUnitPrice(item);
             if (!currentPrice.HasValue || currentPrice.Value <= 0)
             {
@@ -39,22 +36,27 @@ namespace CostAnalysis.App.Services
                 }
             }
 
+            history = FilterByHistoryMonths(history, settings.HistoryMonths);
+            similarHistory = FilterByHistoryMonths(similarHistory, settings.HistoryMonths);
+
             if (history.Count == 0)
             {
                 return PriceWarningResult.Empty;
             }
 
             var messages = new List<string>();
+            var evidence = new List<string>();
             var severity = PriceWarningSeverity.None;
             var sameSupplier = FindLatestSameSupplier(history, supplier);
             if (sameSupplier != null && sameSupplier.PurchaseUnitPrice.HasValue && sameSupplier.PurchaseUnitPrice.Value > 0)
             {
                 var oldPrice = sameSupplier.PurchaseUnitPrice.Value;
                 var increaseRate = (currentPrice.Value - oldPrice) / oldPrice;
-                if (increaseRate >= YellowIncreaseRate)
+                if (increaseRate >= settings.SameSupplierYellowRate)
                 {
-                    severity = Max(severity, increaseRate >= RedIncreaseRate ? PriceWarningSeverity.Red : PriceWarningSeverity.Yellow);
+                    severity = Max(severity, increaseRate >= settings.SameSupplierRedRate ? PriceWarningSeverity.Red : PriceWarningSeverity.Yellow);
                     messages.Add("同供应商上浮 " + FormatPercent(increaseRate) + "，历史价 " + FormatPrice(oldPrice));
+                    evidence.Add("同供应商历史：" + FormatHistoryEvidence(sameSupplier));
                 }
             }
 
@@ -63,10 +65,11 @@ namespace CostAnalysis.App.Services
             {
                 var lowerPrice = lowerSupplier.PurchaseUnitPrice.Value;
                 var gapRate = (currentPrice.Value - lowerPrice) / lowerPrice;
-                if (gapRate >= YellowLowerSupplierRate)
+                if (gapRate >= settings.LowerSupplierYellowRate)
                 {
-                    severity = Max(severity, gapRate >= RedLowerSupplierRate ? PriceWarningSeverity.Red : PriceWarningSeverity.Yellow);
+                    severity = Max(severity, gapRate >= settings.LowerSupplierRedRate ? PriceWarningSeverity.Red : PriceWarningSeverity.Yellow);
                     messages.Add("其他供应商更低：" + SafeSupplier(lowerSupplier.Supplier) + " " + FormatPrice(lowerPrice) + "，差 " + FormatPercent(gapRate));
+                    evidence.Add("更低供应商历史：" + FormatHistoryEvidence(lowerSupplier));
                 }
             }
 
@@ -74,16 +77,42 @@ namespace CostAnalysis.App.Services
             if (similarLower != null && similarLower.PurchaseUnitPrice.HasValue)
             {
                 var gapRate = (currentPrice.Value - similarLower.PurchaseUnitPrice.Value) / similarLower.PurchaseUnitPrice.Value;
-                if (gapRate >= YellowLowerSupplierRate)
+                if (gapRate >= settings.LowerSupplierYellowRate)
                 {
-                    severity = Max(severity, gapRate >= RedLowerSupplierRate ? PriceWarningSeverity.Red : PriceWarningSeverity.Yellow);
+                    severity = Max(severity, gapRate >= settings.LowerSupplierRedRate ? PriceWarningSeverity.Red : PriceWarningSeverity.Yellow);
                     messages.Add("同类型规格历史更低：" + SafeSupplier(similarLower.Supplier) + " " + FormatPrice(similarLower.PurchaseUnitPrice.Value) + "，差 " + FormatPercent(gapRate));
+                    evidence.Add("同类型规格历史：" + FormatHistoryEvidence(similarLower));
                 }
             }
 
             return messages.Count == 0
                 ? PriceWarningResult.Empty
-                : new PriceWarningResult(severity, string.Join("；", messages.Distinct().ToArray()));
+                : new PriceWarningResult(
+                    severity,
+                    string.Join("；", messages.Distinct().ToArray()),
+                    string.Join("\r\n", evidence.Distinct().ToArray()));
+        }
+
+        private static List<CostHistoryItem> FilterByHistoryMonths(List<CostHistoryItem> history, int historyMonths)
+        {
+            if (history == null)
+            {
+                return new List<CostHistoryItem>();
+            }
+
+            if (historyMonths <= 0)
+            {
+                return history;
+            }
+
+            var threshold = DateTime.Today.AddMonths(-historyMonths);
+            return history
+                .Where(item =>
+                {
+                    var date = ParseDate(item.AnalysisDate, item.CreatedAt);
+                    return date == DateTime.MinValue || date >= threshold;
+                })
+                .ToList();
         }
 
         private static decimal? GetCurrentUnitPrice(QuoteImportItem item)
@@ -279,20 +308,69 @@ namespace CostAnalysis.App.Services
         {
             return (rate * 100m).ToString("0.#") + "%";
         }
+
+        private static string FormatHistoryEvidence(CostHistoryItem item)
+        {
+            if (item == null)
+            {
+                return string.Empty;
+            }
+
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(item.AnalysisNo))
+            {
+                parts.Add("单号 " + item.AnalysisNo.Trim());
+            }
+
+            var date = !string.IsNullOrWhiteSpace(item.AnalysisDate) ? item.AnalysisDate : item.CreatedAt;
+            if (!string.IsNullOrWhiteSpace(date))
+            {
+                parts.Add("日期 " + date.Trim());
+            }
+
+            parts.Add("供应商 " + SafeSupplier(item.Supplier));
+
+            if (item.PurchaseUnitPrice.HasValue)
+            {
+                parts.Add("采购价 " + FormatPrice(item.PurchaseUnitPrice.Value));
+            }
+
+            var material = string.IsNullOrWhiteSpace(item.MaterialCode)
+                ? item.MaterialName
+                : item.MaterialCode + " " + item.MaterialName;
+            if (!string.IsNullOrWhiteSpace(material))
+            {
+                parts.Add("物料 " + material.Trim());
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.ExpandedSize))
+            {
+                parts.Add("尺寸 " + item.ExpandedSize.Trim());
+            }
+
+            return string.Join("，", parts.ToArray());
+        }
     }
 
     internal sealed class PriceWarningResult
     {
-        public static readonly PriceWarningResult Empty = new PriceWarningResult(PriceWarningSeverity.None, string.Empty);
+        public static readonly PriceWarningResult Empty = new PriceWarningResult(PriceWarningSeverity.None, string.Empty, string.Empty);
 
         public PriceWarningResult(PriceWarningSeverity severity, string message)
+            : this(severity, message, string.Empty)
+        {
+        }
+
+        public PriceWarningResult(PriceWarningSeverity severity, string message, string evidence)
         {
             Severity = severity;
             Message = message;
+            Evidence = evidence;
         }
 
         public PriceWarningSeverity Severity { get; private set; }
         public string Message { get; private set; }
+        public string Evidence { get; private set; }
     }
 
     internal enum PriceWarningSeverity

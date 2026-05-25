@@ -10,12 +10,19 @@ namespace CostAnalysis.App.UI
     {
         private readonly List<CostHistoryItem> _items;
         private readonly DataGridView _grid;
+        private readonly bool _allowApply;
 
         public CostHistoryItem SelectedItem { get; private set; }
 
         public CostHistoryReferenceForm(string materialCode, string materialName, List<CostHistoryItem> items)
+            : this(materialCode, materialName, items, true)
+        {
+        }
+
+        public CostHistoryReferenceForm(string materialCode, string materialName, List<CostHistoryItem> items, bool allowApply)
         {
             _items = items ?? new List<CostHistoryItem>();
+            _allowApply = allowApply;
             Text = "历史成本参考";
             StartPosition = FormStartPosition.CenterParent;
             Size = new Size(1180, 620);
@@ -51,7 +58,10 @@ namespace CostAnalysis.App.UI
             applyButton.Click += OnApply;
             var closeButton = CreateButton("关闭", false);
             closeButton.Click += (_, __) => DialogResult = DialogResult.Cancel;
-            buttons.Controls.Add(applyButton);
+            if (_allowApply)
+            {
+                buttons.Controls.Add(applyButton);
+            }
             buttons.Controls.Add(closeButton);
             root.Controls.Add(buttons, 0, 2);
 
@@ -173,6 +183,11 @@ namespace CostAnalysis.App.UI
 
         private void ApplySelected()
         {
+            if (!_allowApply)
+            {
+                return;
+            }
+
             if (_grid.CurrentRow == null || _grid.CurrentRow.Tag == null)
             {
                 MessageBox.Show(this, "请先选择一条历史成本记录。", "历史成本参考", MessageBoxButtons.OK, MessageBoxIcon.Information);

@@ -154,6 +154,16 @@ CREATE TABLE IF NOT EXISTS ocr_tool_settings (
     tesseract_path TEXT,
     tesseract_language TEXT
 );");
+
+                Execute(connection, @"
+CREATE TABLE IF NOT EXISTS price_warning_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    same_supplier_yellow_rate REAL DEFAULT 0.0001,
+    same_supplier_red_rate REAL DEFAULT 0.10,
+    lower_supplier_yellow_rate REAL DEFAULT 0.03,
+    lower_supplier_red_rate REAL DEFAULT 0.10,
+    history_months INTEGER DEFAULT 0
+);");
             }
         }
 

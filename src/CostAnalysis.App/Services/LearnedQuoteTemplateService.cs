@@ -59,12 +59,14 @@ namespace CostAnalysis.App.Services
                 dataStartRow = 1;
             }
 
+            dataStartRow = DetectDataStartRow(map, columns, cells, rows, cols, dataStartRow);
+
             var preview = new QuoteImportPreview
             {
                 SheetName = sheetName,
-                Supplier = GetString(map, "supplier"),
-                TemplateType = "本地学习模板-" + (template.Name ?? string.Empty),
-                Confidence = 0.75,
+                Supplier = FindSupplier(cells, rows, cols, GetString(map, "supplier")),
+                TemplateType = "本地规则-" + (template.Name ?? string.Empty),
+                Confidence = Math.Max(0.72, Math.Min(0.95, GetDouble(map, "quality_score"))),
                 HeaderRow = GetInt(map, "header_row"),
                 QuantityRow = GetInt(map, "quantity_row"),
                 DataStartRow = dataStartRow,
@@ -76,7 +78,9 @@ namespace CostAnalysis.App.Services
             for (var row = dataStartRow; row <= rows; row++)
             {
                 var rawName = Get(cells, row, nameColumn);
-                if (string.IsNullOrWhiteSpace(rawName))
+                var code = Get(cells, row, GetInt(columns, "code"));
+                var process = Get(cells, row, GetInt(columns, "process"));
+                if (string.IsNullOrWhiteSpace(rawName) && string.IsNullOrWhiteSpace(code) && string.IsNullOrWhiteSpace(process))
                 {
                     blankCount++;
                     if (blankCount >= 8)
@@ -91,12 +95,12 @@ namespace CostAnalysis.App.Services
                 var item = new QuoteImportItem
                 {
                     RawName = rawName,
-                    MaterialCode = Get(cells, row, GetInt(columns, "code")),
-                    MaterialName = rawName,
-                    FinishedSize = Get(cells, row, GetInt(columns, "size")),
-                    MaterialProcess = Get(cells, row, GetInt(columns, "process")),
-                    MaterialNameExtracted = Get(cells, row, GetInt(columns, "material_name")),
-                    GramWeight = Get(cells, row, GetInt(columns, "gram_weight")),
+                    MaterialCode = code,
+                    MaterialName = string.IsNullOrWhiteSpace(rawName) ? code : rawName,
+                    FinishedSize = NormalizeLearnedSize(Get(cells, row, GetInt(columns, "size"))),
+                    MaterialProcess = NormalizeLearnedProcess(process),
+                    MaterialNameExtracted = NormalizeLearnedMaterial(Get(cells, row, GetInt(columns, "material_name"))),
+                    GramWeight = NormalizeLearnedGramWeight(Get(cells, row, GetInt(columns, "gram_weight"))),
                     UsageQuantity = ParseDecimal(Get(cells, row, GetInt(columns, "usage"))),
                     PriceTiers = ReadPriceTiers(map, cells, row)
                 };
@@ -133,6 +137,58 @@ namespace CostAnalysis.App.Services
             return nameColumn > 0 && (sizeColumn > 0 || processColumn > 0 || GetInt(columns, "code") > 0);
         }
 
+        private static int DetectDataStartRow(Dictionary<string, object> map, Dictionary<string, object> columns, string[,] cells, int rows, int cols, int learnedStartRow)
+        {
+            var start = Math.Max(1, learnedStartRow - 6);
+            var end = Math.Min(rows, Math.Max(learnedStartRow + 30, 60));
+            var nameColumn = GetInt(columns, "name");
+            var codeColumn = GetInt(columns, "code");
+            var sizeColumn = GetInt(columns, "size");
+            var processColumn = GetInt(columns, "process");
+            var priceColumns = GetList(map, "price_columns");
+
+            for (var row = start; row <= end; row++)
+            {
+                var score = 0;
+                var name = Get(cells, row, nameColumn);
+                if (!string.IsNullOrWhiteSpace(name) && !IsPureSerial(name) && !LooksLikeFooterText(name))
+                {
+                    score += 3;
+                }
+
+                if (!string.IsNullOrWhiteSpace(Get(cells, row, codeColumn)))
+                {
+                    score += 2;
+                }
+
+                if (!string.IsNullOrWhiteSpace(Get(cells, row, sizeColumn)))
+                {
+                    score += 1;
+                }
+
+                if (!string.IsNullOrWhiteSpace(Get(cells, row, processColumn)))
+                {
+                    score += 1;
+                }
+
+                foreach (var priceColumn in ReadPriceColumnNumbers(priceColumns))
+                {
+                    if (ParseDecimal(Get(cells, row, priceColumn)).HasValue)
+                    {
+                        score += 2;
+                        break;
+                    }
+                }
+
+                if (score >= 5)
+                {
+                    return row;
+                }
+            }
+
+            return learnedStartRow;
+        }
+
         private static bool HasReliableItems(List<QuoteImportItem> items)
         {
             if (items == null || items.Count == 0)
@@ -166,10 +222,11 @@ namespace CostAnalysis.App.Services
             }
 
             var hasPrice = item.PriceTiers != null && item.PriceTiers.Count > 0;
-            var hasBusinessField = !string.IsNullOrWhiteSpace(item.MaterialCode) ||
-                                   !string.IsNullOrWhiteSpace(item.FinishedSize) ||
-                                   !string.IsNullOrWhiteSpace(item.MaterialProcess);
-            return hasPrice && hasBusinessField;
+            var hasStrongBusinessField = LooksLikeMaterialCode(item.MaterialCode) ||
+                                         LooksLikeSize(item.FinishedSize) ||
+                                         LooksLikeProcessOrMaterial(item.MaterialProcess) ||
+                                         LooksLikeProcessOrMaterial(item.MaterialNameExtracted);
+            return hasPrice && hasStrongBusinessField;
         }
 
         private static bool IsPureSerial(string value)
@@ -223,12 +280,87 @@ namespace CostAnalysis.App.Services
             return tiers;
         }
 
+        private static IEnumerable<int> ReadPriceColumnNumbers(IEnumerable priceColumns)
+        {
+            if (priceColumns == null)
+            {
+                yield break;
+            }
+
+            foreach (var entry in priceColumns)
+            {
+                var priceMap = entry as Dictionary<string, object>;
+                var column = GetInt(priceMap, "column");
+                if (column > 0)
+                {
+                    yield return column;
+                }
+            }
+        }
+
         private static bool HasUsefulContent(QuoteImportItem item)
         {
             return item != null &&
-                   (!string.IsNullOrWhiteSpace(item.MaterialCode) ||
-                    !string.IsNullOrWhiteSpace(item.MaterialProcess) ||
-                    !string.IsNullOrWhiteSpace(item.FinishedSize));
+                   (LooksLikeMaterialCode(item.MaterialCode) ||
+                    LooksLikeProcessOrMaterial(item.MaterialProcess) ||
+                    LooksLikeSize(item.FinishedSize));
+        }
+
+        private static string NormalizeLearnedSize(string value)
+        {
+            var text = (value ?? string.Empty).Trim();
+            return LooksLikeSize(text) ? text : string.Empty;
+        }
+
+        private static string NormalizeLearnedProcess(string value)
+        {
+            var text = (value ?? string.Empty).Trim();
+            return LooksLikeProcessOrMaterial(text) ? text : string.Empty;
+        }
+
+        private static string NormalizeLearnedMaterial(string value)
+        {
+            var text = (value ?? string.Empty).Trim();
+            return LooksLikeProcessOrMaterial(text) ? text : string.Empty;
+        }
+
+        private static string NormalizeLearnedGramWeight(string value)
+        {
+            var text = (value ?? string.Empty).Trim();
+            return Regex.IsMatch(text, @"\d+(?:\.\d+)?\s*(?:g|G|克|#)") ? text : string.Empty;
+        }
+
+        private static bool LooksLikeMaterialCode(string value)
+        {
+            var text = (value ?? string.Empty).Trim();
+            return Regex.IsMatch(text, @"(?:\d+-)?\d{2}\.\d{2}\.[A-Za-z0-9xX]{4,}(?:[-.][A-Za-z0-9]+)*");
+        }
+
+        private static bool LooksLikeSize(string value)
+        {
+            var text = (value ?? string.Empty).Replace(" ", string.Empty);
+            return Regex.IsMatch(text, @"\d+(?:\.\d+)?[*xX×]\d+(?:\.\d+)?");
+        }
+
+        private static bool LooksLikeProcessOrMaterial(string value)
+        {
+            var text = value ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(text) || Regex.IsMatch(text.Trim(), @"^\d+(?:\.\d+)?$"))
+            {
+                return false;
+            }
+
+            return text.IndexOf("纸", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("卡", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("铜", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("胶", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("PET", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("PVC", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("印", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("UV", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("啤", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("粘", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("覆", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static Dictionary<string, object> ParseMap(string json)
@@ -299,10 +431,39 @@ namespace CostAnalysis.App.Services
             return value > 0 ? value : (int?)null;
         }
 
+        private static double GetDouble(Dictionary<string, object> map, string key)
+        {
+            object value;
+            if (map == null || !map.TryGetValue(key, out value) || value == null)
+            {
+                return 0;
+            }
+
+            double result;
+            return double.TryParse(Convert.ToString(value), out result) ? result : 0;
+        }
+
         private static string GetString(Dictionary<string, object> map, string key)
         {
             object value;
             return map != null && map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : string.Empty;
+        }
+
+        private static string FindSupplier(string[,] cells, int rows, int cols, string learnedSupplier)
+        {
+            for (var row = 1; row <= Math.Min(rows, 8); row++)
+            {
+                for (var col = 1; col <= Math.Min(cols, 8); col++)
+                {
+                    var text = Get(cells, row, col);
+                    if (text.IndexOf("有限公司", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        return text.Trim();
+                    }
+                }
+            }
+
+            return learnedSupplier ?? string.Empty;
         }
     }
 }

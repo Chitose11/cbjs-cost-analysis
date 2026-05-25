@@ -74,73 +74,6 @@ namespace CostAnalysis.App.Services
             return ParseChatCompletion(responseText);
         }
 
-        public string BuildCostCompletionRequestJson(AiSettings settings, List<AiCostCompletionInput> rows)
-        {
-            var model = string.IsNullOrWhiteSpace(settings.ModelName) ? "deepseek-v4-flash" : settings.ModelName;
-            var userPrompt = BuildCostCompletionUserPrompt(settings, rows);
-
-            var sb = new StringBuilder();
-            sb.AppendLine("{");
-            WriteJsonProperty(sb, "model", model, 1, true);
-            sb.AppendLine("  \"messages\": [");
-            sb.AppendLine("    {");
-            WriteJsonProperty(sb, "role", "system", 3, true);
-            WriteJsonProperty(sb, "content", AiPromptTemplates.CostCompletionSystemPrompt, 3, false);
-            sb.AppendLine("    },");
-            sb.AppendLine("    {");
-            WriteJsonProperty(sb, "role", "user", 3, true);
-            WriteJsonProperty(sb, "content", userPrompt, 3, false);
-            sb.AppendLine("    }");
-            sb.AppendLine("  ],");
-            sb.AppendLine("  \"response_format\": { \"type\": \"json_object\" },");
-            sb.AppendLine("  \"temperature\": 0.1,");
-            sb.AppendLine("  \"max_tokens\": 2000");
-            sb.AppendLine("}");
-            return sb.ToString();
-        }
-
-        public AiCostCompletionResult SuggestCosts(AiSettings settings, List<AiCostCompletionInput> rows)
-        {
-            ValidateSettings(settings);
-            if (rows == null || rows.Count == 0)
-            {
-                throw new InvalidOperationException("没有可发送给 AI 的成本明细。");
-            }
-
-            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            var requestJson = BuildCostCompletionRequestJson(settings, rows);
-            var requestBytes = Encoding.UTF8.GetBytes(requestJson);
-            var request = (HttpWebRequest)WebRequest.Create(BuildEndpoint(settings.ApiUrl));
-            request.Method = "POST";
-            request.ContentType = "application/json; charset=utf-8";
-            request.Headers.Add("Authorization", "Bearer " + settings.ApiKey);
-            request.Timeout = Math.Max(10, settings.TimeoutSeconds) * 1000;
-            request.ReadWriteTimeout = request.Timeout;
-            request.ContentLength = requestBytes.Length;
-
-            using (var stream = request.GetRequestStream())
-            {
-                stream.Write(requestBytes, 0, requestBytes.Length);
-            }
-
-            string responseText;
-            try
-            {
-                using (var response = (HttpWebResponse)request.GetResponse())
-                using (var stream = response.GetResponseStream())
-                using (var reader = new StreamReader(stream, Encoding.UTF8))
-                {
-                    responseText = reader.ReadToEnd();
-                }
-            }
-            catch (WebException ex)
-            {
-                throw new InvalidOperationException("DeepSeek 调用失败：" + ReadWebException(ex), ex);
-            }
-
-            return ParseCostCompletionChatCompletion(responseText);
-        }
-
         private static void ValidateSettings(AiSettings settings)
         {
             if (settings == null)
@@ -255,67 +188,6 @@ namespace CostAnalysis.App.Services
             return result;
         }
 
-        private static AiCostCompletionResult ParseCostCompletionChatCompletion(string responseText)
-        {
-            var serializer = new JavaScriptSerializer { MaxJsonLength = 1024 * 1024 * 8 };
-            var root = serializer.DeserializeObject(responseText) as Dictionary<string, object>;
-            var choices = GetArray(root, "choices");
-            if (choices.Count == 0)
-            {
-                throw new InvalidOperationException("DeepSeek 返回内容中没有 choices。");
-            }
-
-            var firstChoice = choices[0] as Dictionary<string, object>;
-            var message = GetDictionary(firstChoice, "message");
-            var content = GetString(message, "content");
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                throw new InvalidOperationException("DeepSeek 返回内容为空。");
-            }
-
-            Dictionary<string, object> data;
-            try
-            {
-                data = serializer.DeserializeObject(content) as Dictionary<string, object>;
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException("DeepSeek 返回的不是有效 JSON：" + content, ex);
-            }
-
-            var result = new AiCostCompletionResult
-            {
-                RawContent = content,
-                Items = new List<AiCostCompletionSuggestion>(),
-                Warnings = GetStringList(data, "warnings")
-            };
-
-            foreach (var itemObject in GetArray(data, "items"))
-            {
-                var itemData = itemObject as Dictionary<string, object>;
-                if (itemData == null)
-                {
-                    continue;
-                }
-
-                result.Items.Add(new AiCostCompletionSuggestion
-                {
-                    Index = GetNullableIntAny(itemData, "index", "no", "序号"),
-                    MaterialCost = GetNullableDecimal(itemData, "material_cost"),
-                    PrintingCost = GetNullableDecimal(itemData, "printing_cost"),
-                    PostProcessCost = GetNullableDecimal(itemData, "post_process_cost"),
-                    OtherCost = GetNullableDecimal(itemData, "other_cost"),
-                    PurchaseUnitPrice = GetNullableDecimal(itemData, "purchase_unit_price"),
-                    Confidence = GetDouble(itemData, "confidence"),
-                    RequiresReview = GetBool(itemData, "requires_review"),
-                    Reason = GetString(itemData, "reason"),
-                    Warnings = GetStringList(itemData, "warnings")
-                });
-            }
-
-            return result;
-        }
-
         private static string BuildQuoteRecognitionUserPrompt(AiSettings settings, QuoteImportPreview preview)
         {
             var sb = new StringBuilder();
@@ -405,40 +277,6 @@ namespace CostAnalysis.App.Services
             }
         }
 
-        private static string BuildCostCompletionUserPrompt(AiSettings settings, List<AiCostCompletionInput> rows)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("请根据以下成本分析明细，给出谨慎的成本金额补全建议。");
-            sb.AppendLine("只输出 JSON。不要解释，不要输出 Markdown。");
-            sb.AppendLine(AiPromptTemplates.CostCompletionSchemaInstruction);
-            sb.AppendLine();
-            sb.AppendLine("明细：");
-            for (var i = 0; i < rows.Count; i++)
-            {
-                var row = rows[i];
-                sb.AppendLine("- index：" + row.Index);
-                sb.AppendLine("  物料编码：" + Safe(row.MaterialCode));
-                sb.AppendLine("  物料名称：" + Safe(row.MaterialName));
-                sb.AppendLine("  物料描述：" + Safe(row.MaterialDescription));
-                sb.AppendLine("  供应商：" + (settings.AllowSupplierName ? Safe(row.Supplier) : "[已按设置隐藏]"));
-                sb.AppendLine("  材料名称：" + Safe(row.BaseMaterialName));
-                sb.AppendLine("  材料厂家：" + Safe(row.MaterialVendor));
-                sb.AppendLine("  材料单价：" + Safe(row.MaterialUnitPrice));
-                sb.AppendLine("  原材料克重：" + Safe(row.GramWeight));
-                sb.AppendLine("  展开尺寸：" + Safe(row.ExpandedSize));
-                sb.AppendLine("  当前材料费：" + Safe(row.MaterialCost));
-                sb.AppendLine("  当前印刷费：" + Safe(row.PrintingCost));
-                sb.AppendLine("  当前后工序费：" + Safe(row.PostProcessCost));
-                sb.AppendLine("  当前其他：" + Safe(row.OtherCost));
-                sb.AppendLine("  当前采购单价：" + (settings.AllowPrice ? Safe(row.PurchaseUnitPrice) : "[已按设置隐藏]"));
-                sb.AppendLine("  总用量：" + Safe(row.TotalQuantity));
-                sb.AppendLine("  本地历史参考：" + Safe(row.HistorySummary));
-                sb.AppendLine("  本地工艺规则匹配：" + Safe(row.ProcessRuleSummary));
-            }
-
-            return sb.ToString();
-        }
-
         private static ArrayList GetArray(Dictionary<string, object> data, string key)
         {
             if (data == null || !data.ContainsKey(key) || data[key] == null)
@@ -500,13 +338,6 @@ namespace CostAnalysis.App.Services
             var value = GetString(data, key);
             double number;
             return double.TryParse(value, out number) ? number : 0;
-        }
-
-        private static decimal? GetNullableDecimal(Dictionary<string, object> data, string key)
-        {
-            var value = GetString(data, key);
-            decimal number;
-            return decimal.TryParse(value, out number) ? number : (decimal?)null;
         }
 
         private static int? GetNullableInt(Dictionary<string, object> data, string key)
@@ -665,46 +496,4 @@ namespace CostAnalysis.App.Services
         public List<string> Warnings { get; set; }
     }
 
-    internal sealed class AiCostCompletionInput
-    {
-        public int Index { get; set; }
-        public string MaterialCode { get; set; }
-        public string MaterialName { get; set; }
-        public string MaterialDescription { get; set; }
-        public string Supplier { get; set; }
-        public string BaseMaterialName { get; set; }
-        public string MaterialVendor { get; set; }
-        public string MaterialUnitPrice { get; set; }
-        public string GramWeight { get; set; }
-        public string ExpandedSize { get; set; }
-        public string MaterialCost { get; set; }
-        public string PrintingCost { get; set; }
-        public string PostProcessCost { get; set; }
-        public string OtherCost { get; set; }
-        public string PurchaseUnitPrice { get; set; }
-        public string TotalQuantity { get; set; }
-        public string HistorySummary { get; set; }
-        public string ProcessRuleSummary { get; set; }
-    }
-
-    internal sealed class AiCostCompletionResult
-    {
-        public string RawContent { get; set; }
-        public List<AiCostCompletionSuggestion> Items { get; set; }
-        public List<string> Warnings { get; set; }
-    }
-
-    internal sealed class AiCostCompletionSuggestion
-    {
-        public int? Index { get; set; }
-        public decimal? MaterialCost { get; set; }
-        public decimal? PrintingCost { get; set; }
-        public decimal? PostProcessCost { get; set; }
-        public decimal? OtherCost { get; set; }
-        public decimal? PurchaseUnitPrice { get; set; }
-        public double Confidence { get; set; }
-        public bool RequiresReview { get; set; }
-        public string Reason { get; set; }
-        public List<string> Warnings { get; set; }
-    }
 }
