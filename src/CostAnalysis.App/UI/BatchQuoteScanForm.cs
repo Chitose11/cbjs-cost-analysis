@@ -6,10 +6,13 @@ using System.Threading;
 using System.Windows.Forms;
 using CostAnalysis.App.Data;
 using CostAnalysis.App.Services;
+using MetroFramework;
+using MetroFramework.Controls;
+using MetroFramework.Forms;
 
 namespace CostAnalysis.App.UI
 {
-    internal sealed class BatchQuoteScanForm : Form
+    internal sealed class BatchQuoteScanForm : MetroForm
     {
         private readonly TextBox _folderTextBox;
         private readonly Button _browseButton;
@@ -41,18 +44,21 @@ namespace CostAnalysis.App.UI
             Size = new Size(1200, 720);
             Font = new Font("Microsoft YaHei UI", 9F);
             MinimumSize = new Size(920, 560);
+            Style = MetroColorStyle.Blue;
+            Theme = MetroThemeStyle.Light;
+            ShadowType = MetroFormShadowType.DropShadow;
 
             var root = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
                 RowCount = 4,
-                Padding = new Padding(12)
+                Padding = new Padding(14, 16, 14, 12)
             };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
             Controls.Add(root);
 
             var folderPanel = new TableLayoutPanel
@@ -75,15 +81,22 @@ namespace CostAnalysis.App.UI
             };
             folderPanel.Controls.Add(_folderTextBox, 0, 0);
 
-            _browseButton = new Button { Text = "选择文件夹", Dock = DockStyle.Fill, Margin = new Padding(0, 4, 8, 4) };
+            _browseButton = CreateActionButton("选择文件夹", false);
+            _browseButton.Dock = DockStyle.Fill;
+            _browseButton.Margin = new Padding(0, 4, 8, 4);
             _browseButton.Click += OnBrowseFolder;
             folderPanel.Controls.Add(_browseButton, 1, 0);
 
-            _scanButton = new Button { Text = "开始学习", Dock = DockStyle.Fill, Margin = new Padding(0, 4, 8, 4) };
+            _scanButton = CreateActionButton("开始识别", true);
+            _scanButton.Dock = DockStyle.Fill;
+            _scanButton.Margin = new Padding(0, 4, 8, 4);
             _scanButton.Click += OnStartScan;
             folderPanel.Controls.Add(_scanButton, 2, 0);
 
-            _cancelScanButton = new Button { Text = "停止", Dock = DockStyle.Fill, Enabled = false, Margin = new Padding(0, 4, 0, 4) };
+            _cancelScanButton = CreateActionButton("停止", false);
+            _cancelScanButton.Dock = DockStyle.Fill;
+            _cancelScanButton.Enabled = false;
+            _cancelScanButton.Margin = new Padding(0, 4, 0, 4);
             _cancelScanButton.Click += (_, __) => _cancelRequested = true;
             folderPanel.Controls.Add(_cancelScanButton, 3, 0);
 
@@ -131,46 +144,88 @@ namespace CostAnalysis.App.UI
             };
             statusPanel.Controls.Add(_progressBar, 2, 0);
 
-            var buttons = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.RightToLeft
-            };
+            var buttons = BuildActionBar();
             root.Controls.Add(buttons, 0, 3);
 
-            _importButton = new Button { Text = "识别校对", Width = 96, Height = 32 };
-            _importButton.Click += OnImportSelected;
-            buttons.Controls.Add(_importButton);
-
-            var closeButton = new Button { Text = "关闭", Width = 82, Height = 32 };
-            closeButton.Click += (_, __) => DialogResult = DialogResult.Cancel;
-            buttons.Controls.Add(closeButton);
-
-            _aiCleanButton = new Button { Text = "AI清洗未知", Width = 108, Height = 32 };
-            _aiCleanButton.Click += OnAiCleanUnknown;
-            buttons.Controls.Add(_aiCleanButton);
-
-            _clearSelectionButton = new Button { Text = "取消选择", Width = 92, Height = 32 };
-            _clearSelectionButton.Click += (_, __) => SetReviewSelection(false, false);
-            buttons.Controls.Add(_clearSelectionButton);
-
-            _invertSelectionButton = new Button { Text = "反选", Width = 72, Height = 32 };
-            _invertSelectionButton.Click += (_, __) => InvertReviewSelection();
-            buttons.Controls.Add(_invertSelectionButton);
-
-            _selectReviewableButton = new Button { Text = "全选可复核", Width = 104, Height = 32 };
+            _selectReviewableButton = CreateActionButton("全选可校对", false);
             _selectReviewableButton.Click += (_, __) => SetReviewSelection(true, true);
-            buttons.Controls.Add(_selectReviewableButton);
+            AddActionBarButton(buttons, _selectReviewableButton, 0);
 
-            _saveRulesButton = new Button { Text = "保存工艺候选", Width = 116, Height = 32 };
-            _saveRulesButton.Click += OnSaveRuleCandidates;
-            buttons.Controls.Add(_saveRulesButton);
+            _invertSelectionButton = CreateActionButton("反选", false);
+            _invertSelectionButton.Click += (_, __) => InvertReviewSelection();
+            AddActionBarButton(buttons, _invertSelectionButton, 1);
 
-            _saveMaterialsButton = new Button { Text = "保存材料候选", Width = 116, Height = 32 };
+            _clearSelectionButton = CreateActionButton("取消选择", false);
+            _clearSelectionButton.Click += (_, __) => SetReviewSelection(false, false);
+            AddActionBarButton(buttons, _clearSelectionButton, 2);
+
+            _aiCleanButton = CreateActionButton("AI识别未知", false);
+            _aiCleanButton.Click += OnAiCleanUnknown;
+            AddActionBarButton(buttons, _aiCleanButton, 3);
+
+            _saveMaterialsButton = CreateActionButton("保存材料", false);
             _saveMaterialsButton.Click += OnSaveMaterialCandidates;
-            buttons.Controls.Add(_saveMaterialsButton);
+            AddActionBarButton(buttons, _saveMaterialsButton, 4);
+
+            _saveRulesButton = CreateActionButton("保存工艺", false);
+            _saveRulesButton.Click += OnSaveRuleCandidates;
+            AddActionBarButton(buttons, _saveRulesButton, 5);
+
+            _importButton = CreateActionButton("识别校对", true);
+            _importButton.Click += OnImportSelected;
+            AddActionBarButton(buttons, _importButton, 6);
+
+            var closeButton = CreateActionButton("关闭", false);
+            closeButton.Click += (_, __) => DialogResult = DialogResult.Cancel;
+            AddActionBarButton(buttons, closeButton, 7);
 
             FormClosing += (_, __) => _cancelRequested = true;
+        }
+
+        private static TableLayoutPanel BuildActionBar()
+        {
+            var buttons = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 8,
+                RowCount = 1,
+                Margin = new Padding(0, 4, 0, 0)
+            };
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
+            buttons.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            return buttons;
+        }
+
+        private static void AddActionBarButton(TableLayoutPanel panel, Button button, int column)
+        {
+            button.Dock = column == 6 ? DockStyle.Right : DockStyle.Fill;
+            button.Margin = column == 7 ? new Padding(8, 4, 0, 4) : new Padding(0, 4, 8, 4);
+            if (column == 6)
+            {
+                button.Width = 112;
+            }
+            panel.Controls.Add(button, column, 0);
+        }
+
+        private static Button CreateActionButton(string text, bool primary)
+        {
+            return new MetroButton
+            {
+                Text = text,
+                Style = primary ? MetroColorStyle.Blue : MetroColorStyle.Silver,
+                Theme = MetroThemeStyle.Light,
+                UseSelectable = true,
+                Highlight = primary,
+                DisplayFocus = true,
+                FontSize = MetroButtonSize.Medium
+            };
         }
 
         private Control BuildTabs()
@@ -195,7 +250,7 @@ namespace CostAnalysis.App.UI
 
         private DataGridView BuildGrid()
         {
-            var grid = new DataGridView
+            var grid = new MetroGrid
             {
                 Dock = DockStyle.Fill,
                 AllowUserToAddRows = false,
@@ -291,7 +346,7 @@ namespace CostAnalysis.App.UI
 
         private static DataGridView BuildCandidateGrid()
         {
-            var grid = new DataGridView
+            var grid = new MetroGrid
             {
                 Dock = DockStyle.Fill,
                 AllowUserToAddRows = false,
@@ -516,18 +571,18 @@ namespace CostAnalysis.App.UI
             var rows = GetAiCleanTargetRows();
             if (rows.Count == 0)
             {
-                MessageBox.Show(this, "没有可 AI 清洗的未知单据。请先进行 AI 学习扫描，或选择未识别的行。", "AI清洗未知", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "没有需要 AI 识别的未知单据。请先进行 AI 学习识别，或选择未识别的行。", "AI识别未知", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             var settings = new AiSettingsRepository().Get();
             if (!settings.IsEnabled || string.IsNullOrWhiteSpace(settings.ApiKey))
             {
-                MessageBox.Show(this, "AI 功能尚未启用或未配置 DeepSeek API Key。请先到系统设置中启用 AI。", "AI清洗未知", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "AI 功能尚未启用或未配置 DeepSeek API Key。请先到系统设置中启用 AI。", "AI识别未知", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            var confirm = MessageBox.Show(this, "将对 " + rows.Count + " 个未知单据调用 DeepSeek 批量清洗，结果仍需进入识别校对窗口确认。继续吗？", "AI清洗未知", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            var confirm = MessageBox.Show(this, "将对 " + rows.Count + " 个未知单据调用 DeepSeek 识别，结果仍需进入识别校对窗口确认。继续吗？", "AI识别未知", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (confirm != DialogResult.Yes)
             {
                 return;
@@ -630,8 +685,8 @@ namespace CostAnalysis.App.UI
                     if (rowIndex >= 0 && rowIndex < _grid.Rows.Count)
                     {
                         var row = _grid.Rows[rowIndex];
-                        row.Cells["Status"].Value = "AI清洗中";
-                        _statusLabel.Text = "AI 清洗 " + (i + 1) + "/" + targets.Count + "：" + target.FileName;
+                        row.Cells["Status"].Value = "AI识别中";
+                        _statusLabel.Text = "AI 识别 " + (i + 1) + "/" + targets.Count + "：" + target.FileName;
                     }
                 });
 
@@ -667,8 +722,8 @@ namespace CostAnalysis.App.UI
                 SetScanningState(false);
                 SetProgress(success + failure, targets.Count);
                 _statusLabel.Text = _cancelRequested
-                    ? "AI 清洗已停止。成功 " + success + " 个，失败 " + failure + " 个。"
-                    : "AI 清洗完成。成功 " + success + " 个，失败 " + failure + " 个。";
+                    ? "AI 识别已停止。成功 " + success + " 个，失败 " + failure + " 个。"
+                    : "AI 识别完成。成功 " + success + " 个，失败 " + failure + " 个。";
             });
         }
 
@@ -698,7 +753,7 @@ namespace CostAnalysis.App.UI
             row.Cells["ReuseRate"].Value = validation.SourceCount <= 0 ? "-" : validation.AppliedCount + "/" + validation.SourceCount;
             if (string.IsNullOrWhiteSpace(Convert.ToString(row.Cells["Error"].Value)))
             {
-                row.Cells["Error"].Value = "AI清洗并学习为本地规则";
+                row.Cells["Error"].Value = "AI识别并学习为本地规则";
             }
 
             var counts = AddCandidatesFromPreview(result.Preview, Convert.ToString(row.Cells["FileName"].Value));
@@ -966,7 +1021,7 @@ namespace CostAnalysis.App.UI
             }
 
             _statusLabel.Text = selected
-                ? "已选择可复核报价单 " + changed + " 条。"
+                ? "已选择可校对报价单 " + changed + " 条。"
                 : "已取消选择。";
             UpdateLearningSummary();
         }
@@ -986,7 +1041,7 @@ namespace CostAnalysis.App.UI
                 changed++;
             }
 
-            _statusLabel.Text = "已反选可复核报价单 " + changed + " 条。";
+            _statusLabel.Text = "已反选可校对报价单 " + changed + " 条。";
             UpdateLearningSummary();
         }
 
@@ -1118,7 +1173,7 @@ namespace CostAnalysis.App.UI
                 {
                     return new LocalRuleValidationResult
                     {
-                        StatusText = "需复核",
+                        StatusText = "需校对",
                         SourceCount = sourceCount
                     };
                 }
@@ -1203,7 +1258,7 @@ namespace CostAnalysis.App.UI
                 {
                     partial++;
                 }
-                else if (local == "需复核")
+                else if (local == "需校对")
                 {
                     pending++;
                 }
